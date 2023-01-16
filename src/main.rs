@@ -1,6 +1,10 @@
+mod tokenizer;
 use std::{fs::File, io::Read, rc::Rc};
 
 use clap::{error::Error, Parser};
+use tokenizer::Tokenizer;
+
+use crate::tokenizer::Token;
 
 /// Simple program to greet a person
 #[derive(Parser, Debug)]
@@ -27,96 +31,13 @@ fn open(s: String) -> Result<String, Error> {
     }
 }
 
-#[derive(Debug)]
-enum Literal {
-    //String(std::string::String),
-    Number(f32),
-}
-#[derive(Debug)]
-enum Operator {
-    Add,
-    Mult,
-    Subtract,
-    Divide,
-}
-
-#[derive(Debug)]
-enum Token {
-    Literal(Literal),
-    Operator(Operator),
-}
-
-struct TokenStream {
-    curr: char,
-    iter: Box<dyn Iterator<Item = char>>,
-    state: State,
-    acc: Vec<char>,
-}
-
-impl TokenStream {
-    fn new(program: Rc<String>) -> Self {
-        let tokens = program.chars().collect::<Vec<char>>();
-        Self {
-            curr: ' ',
-            iter: Box::new(tokens.into_iter()),
-            state: State::Waiting,
-            acc: Default::default(),
-        }
-    }
-}
-
-enum State {
-    Waiting,
-    Identifier,
-    Number,
-}
-
-impl Iterator for TokenStream {
-    type Item = Token;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        loop {
-            let curr = self.curr;
-            let next = self.iter.next();
-            // I don't really like this, but this has to happen before the returns below. To fix it, we'd need to move the returns out, probably by separating the state machine out.
-            if let Some(x) = next {
-                self.curr = x;
-            }
-
-            match self.state {
-                State::Waiting => match self.curr {
-                    ' ' => continue,
-                    '0'..='9' => {
-                        self.acc.push(self.curr);
-                        self.state = State::Number;
-                        continue;
-                    }
-                    'a'..='z' => {
-                        self.acc.push(self.curr);
-                        self.state = State::Identifier;
-                        continue;
-                    }
-                    '+' => return Some(Token::Operator(Operator::Add)),
-                    '-' => return Some(Token::Operator(Operator::Subtract)),
-                    '*' => return Some(Token::Operator(Operator::Mult)),
-                    '/' => return Some(Token::Operator(Operator::Divide)),
-                    _ => todo!(),
-                },
-                State::Identifier => match curr {},
-                State::Number => todo!(),
-            }
-
-        }
-    }
-}
-
 struct Program {
     program: Rc<String>,
 }
 
 impl Program {
-    fn tokenStream(&mut self) -> TokenStream {
-        TokenStream::new(self.program.clone())
+    fn tokenStream(&mut self) -> Tokenizer {
+        Tokenizer::new(self.program.clone())
     }
 }
 
@@ -131,10 +52,11 @@ fn main() {
         " ".to_string()
     };
     let mut p = Program {
-        program: Rc::new(input_text),
+        program: Rc::new(input_text.clone()),
     };
 
     let tokens = p.tokenStream().collect::<Vec<Token>>();
 
-    println!("Input: {:?}", tokens);
+    println!("Input string: {}", input_text);
+    println!("tokens: {:?}", tokens);
 }
