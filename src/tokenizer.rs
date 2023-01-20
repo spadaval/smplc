@@ -1,6 +1,9 @@
-use std::{fmt::Display, rc::Rc};
+use std::{
+    fmt::{Debug, Display},
+    rc::Rc,
+};
 
-use log::{info, debug, error};
+use log::{debug, error, info};
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Token {
@@ -28,8 +31,9 @@ impl Display for TokenizerError {
 pub struct ConsumeResponse {
     token: Option<Token>,
     transition: Option<Box<dyn State>>,
+    advance: bool,
 }
-pub trait State {
+pub trait State: Debug {
     fn accept(&mut self, curr: char, next: Option<char>)
         -> Result<ConsumeResponse, TokenizerError>;
 }
@@ -41,6 +45,7 @@ fn emit_and_transition(
     Ok(ConsumeResponse {
         token: Some(token),
         transition: Some(transition),
+        advance: true,
     })
 }
 
@@ -48,6 +53,7 @@ fn emit(token: Token) -> Result<ConsumeResponse, TokenizerError> {
     Ok(ConsumeResponse {
         token: Some(token),
         transition: None,
+        advance: true,
     })
 }
 
@@ -55,6 +61,7 @@ fn transition(state: Box<dyn State>) -> Result<ConsumeResponse, TokenizerError> 
     Ok(ConsumeResponse {
         token: None,
         transition: Some(state),
+        advance: false,
     })
 }
 
@@ -62,6 +69,7 @@ fn pass() -> Result<ConsumeResponse, TokenizerError> {
     Ok(ConsumeResponse {
         token: None,
         transition: None,
+        advance: true,
     })
 }
 
@@ -94,8 +102,6 @@ impl Iterator for Tokenizer {
             let curr = self.curr?;
             let next = self.characters.next();
 
-            self.curr = next;
-
             let res = self.state.accept(curr, next);
             match res {
                 Err(err) => {
@@ -103,7 +109,11 @@ impl Iterator for Tokenizer {
                     panic!();
                 }
                 Ok(response) => {
+                    if response.advance {
+                        self.curr = next;
+                    }
                     if let Some(new_state) = response.transition {
+                        debug!("Move to new state: {:?}", new_state);
                         self.state = new_state;
                     }
                     if response.token.is_some() {
@@ -114,7 +124,7 @@ impl Iterator for Tokenizer {
         }
     }
 }
-
+#[derive(Debug)]
 struct Waiting;
 
 impl State for Waiting {
@@ -124,8 +134,8 @@ impl State for Waiting {
         _next: Option<char>,
     ) -> Result<ConsumeResponse, TokenizerError> {
         match curr {
-            d @ '0'..='9' => transition(Number::new(d)),
-            w @ 'a'..='z' => transition(Identifier::new(w)),
+            '0'..='9' => transition(Number::new()),
+            'a'..='z' => transition(Identifier::new()),
             '+' => emit(Token::Add),
             '-' => emit(Token::Subtract),
             '*' => emit(Token::Mult),
@@ -141,14 +151,13 @@ impl State for Waiting {
     }
 }
 
+#[derive(Debug)]
 struct Identifier {
     acc: Vec<char>,
 }
 impl Identifier {
-    fn new(d: char) -> Box<dyn State> {
-        let mut acc = Vec::new();
-        acc.push(d);
-        return Box::new(Identifier { acc });
+    fn new() -> Box<dyn State> {
+        return Box::new(Identifier { acc: Vec::new() });
     }
 }
 
@@ -171,14 +180,13 @@ impl State for Identifier {
     }
 }
 
+#[derive(Debug)]
 struct Number {
     acc: Vec<char>,
 }
 impl Number {
-    fn new(d: char) -> Box<dyn State> {
-        let mut acc = Vec::new();
-        acc.push(d);
-        return Box::new(Number { acc });
+    fn new() -> Box<dyn State> {
+        return Box::new(Number { acc: Vec::new() });
     }
 }
 
@@ -192,7 +200,10 @@ impl State for Number {
         if curr.is_alphanumeric() {
             self.acc.push(curr);
         }
-        info!("acc: '{:?}', curr: {}, next: {:?}", self.acc, curr, next);
+        info!(
+            "[Number]: acc: '{:?}', curr: {}, next: {:?}",
+            self.acc, curr, next
+        );
 
         if !curr.is_alphanumeric() || next.is_none() || !next.unwrap().is_alphanumeric() {
             let str = self.acc.drain(..).collect::<String>();

@@ -1,4 +1,4 @@
-use log::{info, debug};
+use log::{debug, info};
 
 use crate::tokenizer::{Token, Tokenizer};
 
@@ -42,10 +42,12 @@ impl Parser {
         self.curr = self.tokens.next();
     }
 }
+#[derive(Debug)]
 pub struct ParseError {
     pub message: String,
 }
 
+pub struct Computation;
 pub struct Expression;
 struct Term;
 struct Factor;
@@ -54,6 +56,24 @@ pub type ParseResult = Result<f32, ParseError>;
 
 pub trait Parse {
     fn parse(parser: &mut Parser) -> ParseResult;
+}
+
+impl Parse for Computation {
+    fn parse(parser: &mut Parser) -> ParseResult {
+        let expr = Expression::parse(parser)?;
+        print!("Computation results: {} ", expr);
+
+        loop {
+            match parser.curr.clone() {
+                Some(Token::Period) => {
+                    parser.advance();
+                    let expr = Expression::parse(parser)?;
+                    print!(" {} ", expr);
+                }
+                _ => return Ok(0.0)
+            }
+        }
+    }
 }
 
 impl Parse for Expression {
