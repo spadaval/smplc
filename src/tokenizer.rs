@@ -157,7 +157,7 @@ struct Identifier {
 }
 impl Identifier {
     fn new() -> Box<dyn State> {
-        return Box::new(Identifier { acc: Vec::new() });
+        Box::new(Identifier { acc: Vec::new() })
     }
 }
 
@@ -186,7 +186,7 @@ struct Number {
 }
 impl Number {
     fn new() -> Box<dyn State> {
-        return Box::new(Number { acc: Vec::new() });
+        Box::new(Number { acc: Vec::new() })
     }
 }
 
@@ -209,7 +209,7 @@ impl State for Number {
             let str = self.acc.drain(..).collect::<String>();
             let number = str
                 .parse::<f32>()
-                .expect(format!("tried to parse '{}' to f32", str).as_str());
+                .unwrap_or_else(|_| panic!("tried to parse '{}' to f32", str));
             emit_and_transition(Token::Number(number), Box::new(Waiting {}))
         } else {
             pass()

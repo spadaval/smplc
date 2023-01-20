@@ -3,11 +3,11 @@ mod tokenizer;
 use std::{fs::File, io::Read, rc::Rc};
 
 use clap::error::Error;
-use log::error;
+
 use tokenizer::Tokenizer;
 
 use crate::{
-    parser::{Expression, Parse, Parser, Computation},
+    parser::{Parse, Parser, Computation},
     tokenizer::Token,
 };
 
@@ -31,7 +31,7 @@ fn open(s: String) -> Result<String, Error> {
 
     let mut contents = String::new();
     match file.read_to_string(&mut contents) {
-        Ok(_) => return Ok(contents),
+        Ok(_) => Ok(contents),
         Err(error) => panic!("Couldn't read the file: {}", error),
     }
 }

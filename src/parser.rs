@@ -21,7 +21,7 @@ impl Parser {
     fn expect(&mut self, predicate: fn(&Token) -> bool) -> Result<Token, ParseError> {
         match self.curr.clone() {
             None => {
-                return Err(ParseError {
+                Err(ParseError {
                     message: "blargh".to_string(),
                 })
             }
