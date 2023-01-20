@@ -74,7 +74,9 @@ fn pass() -> Result<ConsumeResponse, TokenizerError> {
 }
 
 pub struct Tokenizer {
+    // end-of-stream can either be signalled by this becoming null, or by another boolean. I'm not sure yet which one is less terrible.
     curr: Option<char>,
+    next: Option<char>,
     characters: Box<dyn Iterator<Item = char>>,
     state: Box<dyn State>,
 }
@@ -86,6 +88,7 @@ impl Tokenizer {
         let mut characters = Box::new(tokens.into_iter());
         Self {
             curr: characters.next(),
+            next: characters.next(),
             characters,
             state: Box::new(Waiting {}),
         }
@@ -100,7 +103,7 @@ impl Iterator for Tokenizer {
             debug!("[Tokenizer] Parsing char '{:?}'", self.curr);
 
             let curr = self.curr?;
-            let next = self.characters.next();
+            let next = self.next;
 
             let res = self.state.accept(curr, next);
             match res {
@@ -111,6 +114,7 @@ impl Iterator for Tokenizer {
                 Ok(response) => {
                     if response.advance {
                         self.curr = next;
+                        self.next = self.characters.next();
                     }
                     if let Some(new_state) = response.transition {
                         debug!("Move to new state: {:?}", new_state);
