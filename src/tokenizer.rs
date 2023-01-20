@@ -1,23 +1,19 @@
 use std::{fmt::Display, rc::Rc};
 
-#[derive(Debug)]
-enum Literal {
+use log::{info, debug, error};
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum Token {
     String(std::string::String),
     Number(f32),
-}
-#[derive(Debug)]
-enum Operator {
+    Identifier(String),
     Add,
     Mult,
     Subtract,
     Divide,
-}
-
-#[derive(Debug)]
-pub enum Token {
-    Literal(Literal),
-    Operator(Operator),
-    Identifier(String),
+    LeftParen,
+    RightParen,
+    Period,
 }
 
 pub struct TokenizerError {
@@ -34,11 +30,8 @@ pub struct ConsumeResponse {
     transition: Option<Box<dyn State>>,
 }
 pub trait State {
-    fn consume(
-        &mut self,
-        curr: char,
-        next: Option<char>,
-    ) -> Result<ConsumeResponse, TokenizerError>;
+    fn accept(&mut self, curr: char, next: Option<char>)
+        -> Result<ConsumeResponse, TokenizerError>;
 }
 
 fn emit_and_transition(
@@ -73,17 +66,19 @@ fn pass() -> Result<ConsumeResponse, TokenizerError> {
 }
 
 pub struct Tokenizer {
-    curr: char,
-    iter: Box<dyn Iterator<Item = char>>,
+    curr: Option<char>,
+    characters: Box<dyn Iterator<Item = char>>,
     state: Box<dyn State>,
 }
 
 impl Tokenizer {
     pub fn new(program: Rc<String>) -> Self {
+        // TODO figure out how to make this lazy
         let tokens = program.chars().collect::<Vec<char>>();
+        let mut characters = Box::new(tokens.into_iter());
         Self {
-            curr: ' ',
-            iter: Box::new(tokens.into_iter()),
+            curr: characters.next(),
+            characters,
             state: Box::new(Waiting {}),
         }
     }
@@ -94,18 +89,17 @@ impl Iterator for Tokenizer {
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
-            let curr = self.curr;
-            println!("Parsing char '{}'", curr);
-            let next = self.iter.next();
-            
-            if let Some(c) = next {
-                self.curr = c;
-            }
+            debug!("[Tokenizer] Parsing char '{:?}'", self.curr);
 
-            let res = self.state.consume(curr, next);
+            let curr = self.curr?;
+            let next = self.characters.next();
+
+            self.curr = next;
+
+            let res = self.state.accept(curr, next);
             match res {
                 Err(err) => {
-                    println!("{}", err);
+                    error!("{}", err);
                     panic!();
                 }
                 Ok(response) => {
@@ -117,11 +111,6 @@ impl Iterator for Tokenizer {
                     }
                 }
             }
-
-            // signal end-of-stream if the underlying character stream is over
-            if next.is_none() {
-                return None;
-            }
         }
     }
 }
@@ -129,20 +118,21 @@ impl Iterator for Tokenizer {
 struct Waiting;
 
 impl State for Waiting {
-    fn consume(
+    fn accept(
         &mut self,
         curr: char,
         _next: Option<char>,
     ) -> Result<ConsumeResponse, TokenizerError> {
-        use Operator::*;
-
         match curr {
             d @ '0'..='9' => transition(Number::new(d)),
             w @ 'a'..='z' => transition(Identifier::new(w)),
-            '+' => emit(Token::Operator(Add)),
-            '-' => emit(Token::Operator(Subtract)),
-            '*' => emit(Token::Operator(Mult)),
-            '/' => emit(Token::Operator(Divide)),
+            '+' => emit(Token::Add),
+            '-' => emit(Token::Subtract),
+            '*' => emit(Token::Mult),
+            '/' => emit(Token::Divide),
+            '(' => emit(Token::LeftParen),
+            ')' => emit(Token::RightParen),
+            '.' => emit(Token::Period),
             ' ' => pass(),
             _ => Err(TokenizerError {
                 message: format!("Recieved unknown character {} while in Waiting", curr),
@@ -163,7 +153,7 @@ impl Identifier {
 }
 
 impl State for Identifier {
-    fn consume(
+    fn accept(
         &mut self,
         curr: char,
         next: Option<char>,
@@ -172,7 +162,7 @@ impl State for Identifier {
 
         if next.is_none() || !next.unwrap().is_alphanumeric() {
             emit_and_transition(
-                Token::Identifier(self.acc.iter().collect::<String>()),
+                Token::Identifier(self.acc.drain(..).collect::<String>()),
                 Box::new(Waiting {}),
             )
         } else {
@@ -193,18 +183,23 @@ impl Number {
 }
 
 impl State for Number {
-    fn consume(
+    fn accept(
         &mut self,
         curr: char,
         next: Option<char>,
     ) -> Result<ConsumeResponse, TokenizerError> {
-        self.acc.push(curr);
+        // TODO fix this ugly mess
+        if curr.is_alphanumeric() {
+            self.acc.push(curr);
+        }
+        info!("acc: '{:?}', curr: {}, next: {:?}", self.acc, curr, next);
 
-        if next.is_none() || !next.unwrap().is_alphanumeric() {
-            emit_and_transition(
-                Token::Identifier(self.acc.iter().collect::<String>()),
-                Box::new(Waiting {}),
-            )
+        if !curr.is_alphanumeric() || next.is_none() || !next.unwrap().is_alphanumeric() {
+            let str = self.acc.drain(..).collect::<String>();
+            let number = str
+                .parse::<f32>()
+                .expect(format!("tried to parse '{}' to f32", str).as_str());
+            emit_and_transition(Token::Number(number), Box::new(Waiting {}))
         } else {
             pass()
         }

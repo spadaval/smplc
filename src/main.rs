@@ -1,13 +1,18 @@
+mod parser;
 mod tokenizer;
 use std::{fs::File, io::Read, rc::Rc};
 
-use clap::{error::Error, Parser};
+use clap::error::Error;
+use log::error;
 use tokenizer::Tokenizer;
 
-use crate::tokenizer::Token;
+use crate::{
+    parser::{Expression, Parse, Parser},
+    tokenizer::Token,
+};
 
 /// Simple program to greet a person
-#[derive(Parser, Debug)]
+#[derive(clap::Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
     /// The input file
@@ -31,18 +36,20 @@ fn open(s: String) -> Result<String, Error> {
     }
 }
 
+#[derive(Clone)]
 struct Program {
     program: Rc<String>,
 }
 
 impl Program {
-    fn tokenStream(&mut self) -> Tokenizer {
+    fn tokens(&mut self) -> Tokenizer {
         Tokenizer::new(self.program.clone())
     }
 }
 
 fn main() {
-    let args = Args::parse();
+    env_logger::init();
+    let args = <Args as clap::Parser>::parse();
 
     let input_text = if let Some(x) = args.input_text {
         x
@@ -55,8 +62,13 @@ fn main() {
         program: Rc::new(input_text.clone()),
     };
 
-    let tokens = p.tokenStream().collect::<Vec<Token>>();
-
     println!("Input string: {}", input_text);
+    let tokens = p.clone().tokens().collect::<Vec<Token>>();
     println!("tokens: {:?}", tokens);
+
+    let mut parser = Parser::new(p.tokens());
+    match Expression::parse(&mut parser) {
+        Ok(r) => println!("Result: {}", r),
+        Err(e) => error!("{}", e.message),
+    };
 }
