@@ -1,13 +1,15 @@
 mod parser;
 mod tokenizer;
 use std::{fs::File, io::Read, rc::Rc};
+#[macro_use]
+extern crate derive_new;
 
 use clap::error::Error;
 
 use tokenizer::Tokenizer;
 
 use crate::{
-    parser::{Parse, Parser, Computation},
+    parser::{Computation, Parse, Parser},
     tokenizer::Token,
 };
 
@@ -67,11 +69,11 @@ fn main() {
     println!("tokens: {:?}", tokens);
 
     let mut parser = Parser::new(p.tokens());
-    /* 
+    /*
     match Expression::parse(&mut parser) {
         Ok(r) => println!("Result: {}", r),
         Err(e) => error!("{}", e.message),
     };
     */
-    Computation::parse(&mut parser).expect("Computation failed");
+    Computation::new().parse(&mut parser).expect("Computation failed");
 }

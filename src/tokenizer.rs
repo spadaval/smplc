@@ -14,9 +14,11 @@ pub enum Token {
     Mult,
     Subtract,
     Divide,
+    LessThan,
     LeftParen,
     RightParen,
     Period,
+    Assignment,
 }
 
 pub struct TokenizerError {
@@ -62,6 +64,14 @@ fn transition(state: Box<dyn State>) -> Result<ConsumeResponse, TokenizerError> 
         token: None,
         transition: Some(state),
         advance: false,
+    })
+}
+
+fn transition_and_advance(state: Box<dyn State>) -> Result<ConsumeResponse, TokenizerError> {
+    Ok(ConsumeResponse {
+        token: None,
+        transition: Some(state),
+        advance: true,
     })
 }
 
@@ -113,6 +123,7 @@ impl Iterator for Tokenizer {
                 }
                 Ok(response) => {
                     if response.advance {
+                        debug!("Advancing tokenstream");
                         self.curr = next;
                         self.next = self.characters.next();
                     }
@@ -135,11 +146,15 @@ impl State for Waiting {
     fn accept(
         &mut self,
         curr: char,
-        _next: Option<char>,
+        next: Option<char>,
     ) -> Result<ConsumeResponse, TokenizerError> {
         match curr {
             '0'..='9' => transition(Number::new()),
             'a'..='z' => transition(Identifier::new()),
+            '<' => match next {
+                Some('-') => transition_and_advance(Assign::new()),
+                _ => emit(Token::LessThan),
+            },
             '+' => emit(Token::Add),
             '-' => emit(Token::Subtract),
             '*' => emit(Token::Mult),
@@ -217,6 +232,29 @@ impl State for Number {
             emit_and_transition(Token::Number(number), Box::new(Waiting {}))
         } else {
             pass()
+        }
+    }
+}
+
+#[derive(Debug)]
+struct Assign {}
+impl Assign {
+    fn new() -> Box<dyn State> {
+        Box::new(Assign {})
+    }
+}
+
+impl State for Assign {
+    fn accept(
+        &mut self,
+        curr: char,
+        next: Option<char>,
+    ) -> Result<ConsumeResponse, TokenizerError> {
+        match curr {
+            '-' => emit_and_transition(Token::Assignment, Box::new(Waiting {})),
+            _ => Err(TokenizerError {
+                message: format!("Recieved unknown character {} while in Assign", curr),
+            }),
         }
     }
 }
