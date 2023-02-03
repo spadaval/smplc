@@ -1,13 +1,13 @@
+use crate::{
+    tokenizer::{Ident, Token, Tokenizer},
+    Program,
+};
 use log::{debug, info};
-use std::collections::HashMap;
-
-use crate::tokenizer::{Token, Tokenizer};
+use serde::{Deserialize, Serialize};
 
 pub struct Parser {
     curr: Option<Token>,
     tokens: Tokenizer,
-    // TODO move this somewhere else
-    variables: HashMap<String, f32>,
 }
 
 impl Parser {
@@ -15,7 +15,6 @@ impl Parser {
         Parser {
             curr: tokens.next(),
             tokens,
-            variables: Default::default(),
         }
     }
 
@@ -49,216 +48,220 @@ pub struct ParseError {
     pub message: String,
 }
 
-#[derive(new)]
-pub struct Computation {}
+pub struct BlockParser;
 
-#[derive(new)]
-pub struct Assignment;
-#[derive(new)]
-pub struct Expression;
-#[derive(new)]
-struct Term;
-#[derive(new)]
-struct Factor;
+pub struct AssignmentParser;
+pub struct ExpressionParser;
+struct TermParser;
+struct FactorParser;
 
-#[derive(Debug)]
-pub enum ParseNode {
-    Assign(String, f32),
-    Number(f32),
+#[derive(Serialize, Debug, PartialEq)]
+pub enum Expression {
+    Constant(f32),
+    Identifier(Ident),
+    Add(Box<Expression>, Box<Expression>),
+    Subtract(Box<Expression>, Box<Expression>),
+    Multiply(Box<Expression>, Box<Expression>),
+    Divide(Box<Expression>, Box<Expression>),
 }
-use ParseNode::*;
+
+struct Block {}
+
+pub enum ParseNode {
+    Expression(Expression),
+    Binding(Ident, Expression),
+    Block(Vec<ParseNode>),
+    Relation {
+        left: Expression,
+        compare_op: Token,
+        right: Expression,
+    },
+    If {
+        condition: Box<ParseNode>,
+        body: Block,
+    },
+    While {
+        condition: Box<ParseNode>,
+        body: Block,
+    },
+}
 pub type ParseResult = Result<ParseNode, ParseError>;
 
 pub trait Parse {
-    fn parse(&mut self, parser: &mut Parser) -> ParseResult;
-}
+    type Item = ParseNode;
+    fn parse(parser: &mut Parser) -> Result<Self::Item, ParseError>;
 
-impl Computation {
-    fn do_parse(&mut self, parser: &mut Parser) -> ParseResult {
-        match parser.curr.clone() {
-            Some(Token::Identifier(s)) if s=="var" => {
-                debug!("Trying to parse assignment");
-                parser.advance();
-                let assignment = Assignment::new().parse(parser)?;
-                match assignment {
-                    ParseNode::Assign(ident, num) => {
-                        parser.variables.insert(ident.clone(), num);
-                        info!("Assigned {} <- {}", ident, num);
-                        return Ok(Number(num));
-                    }
-                    _ => Err(ParseError {
-                        message: "wtf".to_string(),
-                    }),
-                }
-            }
-            _ => {
-                let expr = Expression::new().parse(parser)?;
-                print!("Computation results: {:?} ", expr);
-
-                loop {
-                    match parser.curr.clone() {
-                        Some(Token::Period) => {
-                            parser.advance();
-                            let expr = Expression::new().parse(parser)?;
-                            print!(" {:?} ", expr);
-                        }
-                        _ => return Ok(Number(0.0)),
-                    }
-                }
-            }
-        }
+    fn err(&self, message: impl Into<String>) -> ParseResult {
+        Err(ParseError {
+            message: message.into(),
+        })
     }
 }
 
-impl Parse for Computation {
-    fn parse(&mut self, parser: &mut Parser) -> ParseResult {
-        loop {
-            self.do_parse(parser)?;
-            match parser.curr {
-                Some(Token::Period) => parser.advance(),
-                Some(_) => {
-                    return Err(ParseError {
-                        message: "Unexpected extra characters".to_string(),
-                    })
-                }
-                None => return Ok(Number(0.0)),
-            }
-        }
-    }
+fn err<R>(message: impl Into<String>) -> Result<R, ParseError> {
+    Err(ParseError {
+        message: message.into(),
+    })
 }
+//use crate::Token::Identifier;
+// impl BlockParser {
+//     fn do_parse(&mut self, parser: &mut Parser) -> ParseResult {
+//         match parser.curr.clone() {
+//             Some(Token::Identifier(Ident(s))) if s == "var" => {
+//                 debug!("Trying to parse assignment");
+//                 parser.advance();
+//                 let assignment = AssignmentParser::parse(parser)?;
+//                 match assignment {
+//                     ParseNode::Assign(ref ident, num) => {
+//                         return Ok()
 
-impl Parse for Assignment {
-    fn parse(&mut self, parser: &mut Parser) -> ParseResult {
+//                         parser.variables.insert(ident, num);
+//                         info!("Assigned {} <- {}", ident, num);
+//                         return Ok(num);
+//                     }
+//                     _ => err("wtf"),
+//                 }
+//             }
+//             _ => {
+//                 let expr = ExpressionParser::parse(parser)?;
+//                 print!("Computation results: {:?} ", expr);
+
+//                 loop {
+//                     match parser.curr.clone() {
+//                         Some(Token::Period) => {
+//                             parser.advance();
+//                             let expr = ExpressionParser::parse(parser)?;
+//                             print!(" {:?} ", expr);
+//                         }
+//                         _ => return Ok(Number(0.0)),
+//                     }
+//                 }
+//             }
+//         }
+//     }
+// }
+
+// impl Parse for BlockParser {
+//     fn parse(parser: &mut Parser) -> ParseResult {
+//         loop {
+//             BlockParser.do_parse(parser)?;
+//             match parser.curr {
+//                 Some(Token::Period) => parser.advance(),
+//                 Some(t) => return err(format!("Unexpected extra characters after block: {:?}", t)),
+//                 None => return Ok(Number(0.0)),
+//             }
+//         }
+//     }
+// }
+
+impl Parse for AssignmentParser {
+    fn parse(parser: &mut Parser) -> ParseResult {
         let lvalue = parser.expect(|token| matches!(token, Token::Identifier(_)))?;
 
         parser.expect(|token| matches!(token, Token::Assignment))?;
 
         debug!("lvalue: {:?} ", lvalue);
-        let expr = Expression::new().parse(parser)?;
+        let expr = ExpressionParser::parse(parser)?;
         let ident = if let Token::Identifier(ident) = lvalue {
             ident
         } else {
-            return Err(ParseError {
-                message: "wtf".to_string(),
-            });
+            return err("wtf");
         };
 
-        match expr {
-            Number(n) => Ok(ParseNode::Assign(ident, n)),
-            _ => Err(ParseError {
-                message: "wtf".to_string(),
-            }),
-        }
+        Ok(ParseNode::Binding(ident, expr))
     }
 }
 
-impl Parse for Expression {
-    fn parse(&mut self, parser: &mut Parser) -> ParseResult {
-        let mut acc = 0.0;
-
-        let term = Term::new().parse(parser)?;
-
-        match term {
-            ParseNode::Number(n) => acc += n,
-            _ => {
-                return Err(ParseError {
-                    message: "Expected number while parsing expression".to_string(),
-                })
-            }
-        }
-
-        debug!("Expression: current acc={}", acc);
+impl Parse for ExpressionParser {
+    type Item = Expression;
+    fn parse(parser: &mut Parser) -> Result<Expression, ParseError> {
+        let mut term = Box::new(TermParser::parse(parser).unwrap());
 
         loop {
-            debug!("Expression: current acc={}", acc);
             match parser.curr.clone() {
-                Some(t @ Token::Add) | Some(t @ Token::Subtract) => {
+                Some(t @ Token::Plus) | Some(t @ Token::Minus) => {
                     parser.advance();
-                    let term2 = match Term::new().parse(parser)? {
-                        Number(n) => n,
-                        _ => {
-                            return Err(ParseError {
-                                message: "Expected number when parsing expression".to_string(),
-                            })
-                        }
-                    };
+                    let term2 = Box::new(TermParser::parse(parser).unwrap());
+
                     match t {
-                        Token::Add => acc += term2,
-                        Token::Subtract => acc -= term2,
+                        Token::Plus => term = Box::new(Expression::Add(term, term2)),
+                        Token::Minus => term = Box::new(Expression::Subtract(term, term2)),
                         _ => unreachable!(),
                     }
                 }
-                _ => return Ok(Number(acc)),
+                _ => return Ok(*term),
             }
         }
     }
 }
 
-impl Parse for Term {
-    fn parse(&mut self, parser: &mut Parser) -> ParseResult {
-        let mut acc = 0.0;
-
-        let factor = match Factor::new().parse(parser)? {
-            Number(n) => n,
-            _ => {
-                return Err(ParseError {
-                    message: "Expected number when parsing term".to_string(),
-                })
-            }
-        };
-        acc += factor;
+impl Parse for TermParser {
+    type Item = Expression;
+    fn parse(parser: &mut Parser) -> Result<Expression, ParseError> {
+        let mut factor = Box::new(FactorParser::parse(parser).unwrap());
 
         loop {
             info!("Term: got {:?}", parser.curr);
             match parser.curr.clone() {
-                Some(t @ Token::Mult) | Some(t @ Token::Divide) => {
+                Some(t @ Token::Star) | Some(t @ Token::Divide) => {
                     parser.advance();
-                    let factor2 = match Factor::new().parse(parser)? {
-                        Number(n) => n,
-                        _ => {
-                            return Err(ParseError {
-                                message: "Expected number when parsing term".to_string(),
-                            })
-                        }
-                    };
+                    let factor2 = Box::new(FactorParser::parse(parser).unwrap());
                     match t {
-                        Token::Mult => acc *= factor2,
-                        Token::Divide => acc /= factor2,
+                        Token::Star => factor = Box::new(Expression::Multiply(factor, factor2)),
+                        Token::Divide => factor = Box::new(Expression::Divide(factor, factor2)),
                         _ => unreachable!(),
                     }
                 }
-                _ => return Ok(Number(acc)),
+                // TODO deal with all this box juggling nonsense
+                _ => return Ok(*factor),
             }
         }
     }
 }
 
-impl Parse for Factor {
-    fn parse(&mut self, parser: &mut Parser) -> ParseResult {
+impl Parse for FactorParser {
+    type Item = Expression;
+    fn parse(parser: &mut Parser) -> Result<Expression, ParseError> {
         match parser.curr.clone() {
             Some(Token::Number(x)) => {
                 parser.advance();
-                Ok(Number(x))
+                Ok(Expression::Constant(x))
             }
             Some(Token::Identifier(x)) => {
                 parser.advance();
-                if parser.variables.contains_key(&x) {
-                    Ok(Number(*parser.variables.get(&x).unwrap()))
-                } else {
-                    Err(ParseError {
-                        message: format!("Undefined variable {}", x),
-                    })
-                }
+                Ok(Expression::Identifier(x))
             }
             Some(Token::LeftParen) => {
                 parser.advance();
-                let expr = Expression::new().parse(parser);
+                let expr = ExpressionParser::parse(parser);
                 parser.expect(|t| matches!(t, Token::RightParen))?;
                 expr
             }
-            _ => Err(ParseError {
-                message: "failed to parse factor".to_string(),
-            }),
+            _ => err("Failed to parse factor"),
         }
+    }
+}
+
+pub fn parse(mut program: Program) -> Expression {
+    let mut parser = Parser::new(program.tokens());
+    return ExpressionParser::parse(&mut parser).expect("Failed to parse expression");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Program;
+    use pretty_assertions::{assert_eq};
+    use std::{iter::zip, rc::Rc};
+
+    #[test]
+    fn test_parse_expression() {
+        let program = parse(Program {
+            program: Rc::new("1+2".to_string()),
+        });
+        use Expression::*;
+
+        let expected_program = Add(Box::new(Constant(1.0)), Box::new(Constant(2.0)));
+        assert_eq!(program, expected_program);
     }
 }

@@ -4,21 +4,54 @@ use std::{
 };
 
 use log::{debug, error, info};
+use serde::{Deserialize, Serialize};
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+pub struct Ident(pub std::string::String);
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Token {
     String(std::string::String),
     Number(f32),
-    Identifier(String),
-    Add,
-    Mult,
-    Subtract,
+    Identifier(Ident),
+    // arithmetic
+    Plus,
+    Star,
+    Minus,
     Divide,
+    // relational
     LessThan,
+    GreaterThan,
+    LessThanEqual,
+    GreaterThanEqual,
+    // misc operators
     LeftParen,
     RightParen,
     Period,
     Assignment,
+    // keywords
+    Var,
+    If,
+    Then,
+    Fi,
+    While,
+    Do,
+    Od,
+}
+
+fn identifier_to_keyword(token: Token) -> Option<Token> {
+    let ident = match token {
+        Token::Identifier(s) => s,
+        _ => panic!("Tried to convert a non-identifer to a reserved word"),
+    };
+    match ident.0.as_str() {
+        "var" => Some(Token::Var),
+        "if" => Some(Token::If),
+        "fi" => Some(Token::Fi),
+        "while" => Some(Token::While),
+        "do" => Some(Token::Do),
+        "od" => Some(Token::Od),
+        _ => None,
+    }
 }
 
 pub struct TokenizerError {
@@ -30,20 +63,18 @@ impl Display for TokenizerError {
     }
 }
 
+type TokenizerResult = Result<ConsumeResponse, TokenizerError>;
+
 pub struct ConsumeResponse {
     token: Option<Token>,
     transition: Option<Box<dyn State>>,
     advance: bool,
 }
 pub trait State: Debug {
-    fn accept(&mut self, curr: char, next: Option<char>)
-        -> Result<ConsumeResponse, TokenizerError>;
+    fn accept(&mut self, curr: char, next: Option<char>) -> TokenizerResult;
 }
 
-fn emit_and_transition(
-    token: Token,
-    transition: Box<dyn State>,
-) -> Result<ConsumeResponse, TokenizerError> {
+fn emit_and_transition(token: Token, transition: Box<dyn State>) -> TokenizerResult {
     Ok(ConsumeResponse {
         token: Some(token),
         transition: Some(transition),
@@ -51,7 +82,7 @@ fn emit_and_transition(
     })
 }
 
-fn emit(token: Token) -> Result<ConsumeResponse, TokenizerError> {
+fn emit(token: Token) -> TokenizerResult {
     Ok(ConsumeResponse {
         token: Some(token),
         transition: None,
@@ -59,7 +90,7 @@ fn emit(token: Token) -> Result<ConsumeResponse, TokenizerError> {
     })
 }
 
-fn transition(state: Box<dyn State>) -> Result<ConsumeResponse, TokenizerError> {
+fn transition(state: Box<dyn State>) -> TokenizerResult {
     Ok(ConsumeResponse {
         token: None,
         transition: Some(state),
@@ -67,7 +98,7 @@ fn transition(state: Box<dyn State>) -> Result<ConsumeResponse, TokenizerError> 
     })
 }
 
-fn transition_and_advance(state: Box<dyn State>) -> Result<ConsumeResponse, TokenizerError> {
+fn transition_and_advance(state: Box<dyn State>) -> TokenizerResult {
     Ok(ConsumeResponse {
         token: None,
         transition: Some(state),
@@ -75,7 +106,7 @@ fn transition_and_advance(state: Box<dyn State>) -> Result<ConsumeResponse, Toke
     })
 }
 
-fn pass() -> Result<ConsumeResponse, TokenizerError> {
+fn pass() -> TokenizerResult {
     Ok(ConsumeResponse {
         token: None,
         transition: None,
@@ -143,21 +174,17 @@ impl Iterator for Tokenizer {
 struct Waiting;
 
 impl State for Waiting {
-    fn accept(
-        &mut self,
-        curr: char,
-        next: Option<char>,
-    ) -> Result<ConsumeResponse, TokenizerError> {
+    fn accept(&mut self, curr: char, next: Option<char>) -> TokenizerResult {
         match curr {
             '0'..='9' => transition(Number::new()),
-            'a'..='z' => transition(Identifier::new()),
+            'a'..='z' => transition(Ident::new()),
             '<' => match next {
                 Some('-') => transition_and_advance(Assign::new()),
                 _ => emit(Token::LessThan),
             },
-            '+' => emit(Token::Add),
-            '-' => emit(Token::Subtract),
-            '*' => emit(Token::Mult),
+            '+' => emit(Token::Plus),
+            '-' => emit(Token::Minus),
+            '*' => emit(Token::Star),
             '/' => emit(Token::Divide),
             '(' => emit(Token::LeftParen),
             ')' => emit(Token::RightParen),
@@ -171,26 +198,23 @@ impl State for Waiting {
 }
 
 #[derive(Debug)]
-struct Identifier {
+struct IdentifierState {
     acc: Vec<char>,
 }
-impl Identifier {
+impl Ident {
     fn new() -> Box<dyn State> {
-        Box::new(Identifier { acc: Vec::new() })
+        Box::new(IdentifierState { acc: Vec::new() })
     }
 }
 
-impl State for Identifier {
-    fn accept(
-        &mut self,
-        curr: char,
-        next: Option<char>,
-    ) -> Result<ConsumeResponse, TokenizerError> {
+impl State for IdentifierState {
+    fn accept(&mut self, curr: char, next: Option<char>) -> TokenizerResult {
         self.acc.push(curr);
 
         if next.is_none() || !next.unwrap().is_alphanumeric() {
+            let token = Token::Identifier(Ident(self.acc.drain(..).collect::<String>()));
             emit_and_transition(
-                Token::Identifier(self.acc.drain(..).collect::<String>()),
+                identifier_to_keyword(token.clone()).unwrap_or(token),
                 Box::new(Waiting {}),
             )
         } else {
@@ -210,11 +234,7 @@ impl Number {
 }
 
 impl State for Number {
-    fn accept(
-        &mut self,
-        curr: char,
-        next: Option<char>,
-    ) -> Result<ConsumeResponse, TokenizerError> {
+    fn accept(&mut self, curr: char, next: Option<char>) -> TokenizerResult {
         // TODO fix this ugly mess
         if curr.is_alphanumeric() {
             self.acc.push(curr);
@@ -245,16 +265,44 @@ impl Assign {
 }
 
 impl State for Assign {
-    fn accept(
-        &mut self,
-        curr: char,
-        next: Option<char>,
-    ) -> Result<ConsumeResponse, TokenizerError> {
+    fn accept(&mut self, curr: char, next: Option<char>) -> TokenizerResult {
         match curr {
             '-' => emit_and_transition(Token::Assignment, Box::new(Waiting {})),
             _ => Err(TokenizerError {
                 message: format!("Recieved unknown character {} while in Assign", curr),
             }),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Program;
+    use pretty_assertions::{assert_eq, assert_ne};
+    use std::{rc::Rc, iter::zip};
+
+    #[test]
+    fn test_tokenize_expression() {
+        let tokens = Program {
+            program: Rc::new("1+2-(4+5) * a".to_string()),
+        }
+        .tokens();
+
+        let expected_tokens = vec![
+            Token::Number(1.0),
+            Token::Plus,
+            Token::Number(2.0),
+            Token::Minus,
+            Token::LeftParen,
+            Token::Number(4.0),
+            Token::Plus,
+            Token::Number(5.0),
+            Token::RightParen,
+            Token::Star,
+            Token::Identifier(Ident("a".to_string()))
+            ];
+
+            zip(tokens, expected_tokens).for_each(|(actual, expected)| assert_eq!(actual, expected))
     }
 }

@@ -10,3 +10,6 @@ clap = { version = "4.1.1", features = ["derive"] }
 derive-new = "0.5.9"
 env_logger = "0.10.0"
 log = "0.4.17"
+pretty_assertions = "1.3.0"
+serde = {version = "1.0.152", features=['derive']}
+ts-rs = "6.2.1"

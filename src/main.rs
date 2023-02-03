@@ -1,3 +1,5 @@
+#![feature(associated_type_defaults)]
+
 mod parser;
 mod tokenizer;
 use std::{fs::File, io::Read, rc::Rc};
@@ -9,7 +11,7 @@ use clap::error::Error;
 use tokenizer::Tokenizer;
 
 use crate::{
-    parser::{Computation, Parse, Parser},
+    parser::{BlockParser, Parse, Parser, parse},
     tokenizer::Token,
 };
 
@@ -39,7 +41,7 @@ fn open(s: String) -> Result<String, Error> {
 }
 
 #[derive(Clone)]
-struct Program {
+pub struct Program {
     program: Rc<String>,
 }
 
@@ -68,12 +70,7 @@ fn main() {
     let tokens = p.clone().tokens().collect::<Vec<Token>>();
     println!("tokens: {:?}", tokens);
 
-    let mut parser = Parser::new(p.tokens());
-    /*
-    match Expression::parse(&mut parser) {
-        Ok(r) => println!("Result: {}", r),
-        Err(e) => error!("{}", e.message),
-    };
-    */
-    Computation::new().parse(&mut parser).expect("Computation failed");
+    let ast = parse(p.clone());
+    println!("{:#?}", ast);
+
 }
