@@ -191,7 +191,7 @@ impl State for Waiting {
             '.' => emit(Token::Period),
             ' ' => pass(),
             _ => Err(TokenizerError {
-                message: format!("Recieved unknown character {} while in Waiting", curr),
+                message: format!("Recieved unknown character {curr} while in Waiting"),
             }),
         }
     }
@@ -248,7 +248,7 @@ impl State for Number {
             let str = self.acc.drain(..).collect::<String>();
             let number = str
                 .parse::<f32>()
-                .unwrap_or_else(|_| panic!("tried to parse '{}' to f32", str));
+                .unwrap_or_else(|_| panic!("tried to parse '{str}' to f32"));
             emit_and_transition(Token::Number(number), Box::new(Waiting {}))
         } else {
             pass()
@@ -265,11 +265,11 @@ impl Assign {
 }
 
 impl State for Assign {
-    fn accept(&mut self, curr: char, next: Option<char>) -> TokenizerResult {
+    fn accept(&mut self, curr: char, _next: Option<char>) -> TokenizerResult {
         match curr {
             '-' => emit_and_transition(Token::Assignment, Box::new(Waiting {})),
             _ => Err(TokenizerError {
-                message: format!("Recieved unknown character {} while in Assign", curr),
+                message: format!("Recieved unknown character {curr} while in Assign"),
             }),
         }
     }
@@ -279,7 +279,7 @@ impl State for Assign {
 mod tests {
     use super::*;
     use crate::Program;
-    use pretty_assertions::{assert_eq, assert_ne};
+    use pretty_assertions::{assert_eq};
     use std::{rc::Rc, iter::zip};
 
     #[test]

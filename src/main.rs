@@ -11,7 +11,7 @@ use clap::error::Error;
 use tokenizer::Tokenizer;
 
 use crate::{
-    parser::{BlockParser, Parse, Parser, parse},
+    parser::{parse},
     tokenizer::Token,
 };
 
@@ -30,13 +30,13 @@ struct Args {
 fn open(s: String) -> Result<String, Error> {
     let mut file = match File::open(s) {
         Ok(file) => file,
-        Err(error) => panic!("Couldn't open the file: {}", error),
+        Err(error) => panic!("Couldn't open the file: {error}"),
     };
 
     let mut contents = String::new();
     match file.read_to_string(&mut contents) {
         Ok(_) => Ok(contents),
-        Err(error) => panic!("Couldn't read the file: {}", error),
+        Err(error) => panic!("Couldn't read the file: {error}"),
     }
 }
 
@@ -62,15 +62,15 @@ fn main() {
     } else {
         " ".to_string()
     };
-    let mut p = Program {
+    let p = Program {
         program: Rc::new(input_text.clone()),
     };
 
-    println!("Input string: {}", input_text);
+    println!("Input string: {input_text}");
     let tokens = p.clone().tokens().collect::<Vec<Token>>();
-    println!("tokens: {:?}", tokens);
+    println!("tokens: {tokens:?}");
 
-    let ast = parse(p.clone());
-    println!("{:#?}", ast);
+    let ast = parse(p);
+    println!("{ast:#?}");
 
 }

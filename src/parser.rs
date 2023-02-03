@@ -3,7 +3,7 @@ use crate::{
     Program,
 };
 use log::{debug, info};
-use serde::{Deserialize, Serialize};
+use serde::{Serialize};
 
 pub struct Parser {
     curr: Option<Token>,
@@ -244,7 +244,7 @@ impl Parse for FactorParser {
 
 pub fn parse(mut program: Program) -> Expression {
     let mut parser = Parser::new(program.tokens());
-    return ExpressionParser::parse(&mut parser).expect("Failed to parse expression");
+    ExpressionParser::parse(&mut parser).expect("Failed to parse expression")
 }
 
 #[cfg(test)]
@@ -252,7 +252,7 @@ mod tests {
     use super::*;
     use crate::Program;
     use pretty_assertions::{assert_eq};
-    use std::{iter::zip, rc::Rc};
+    use std::{rc::Rc};
 
     #[test]
     fn test_parse_expression() {
