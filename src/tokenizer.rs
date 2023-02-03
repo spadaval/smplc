@@ -279,8 +279,8 @@ impl State for Assign {
 mod tests {
     use super::*;
     use crate::Program;
-    use pretty_assertions::{assert_eq};
-    use std::{rc::Rc, iter::zip};
+    use pretty_assertions::assert_eq;
+    use std::{iter::zip, rc::Rc};
 
     #[test]
     fn test_tokenize_expression() {
@@ -300,9 +300,9 @@ mod tests {
             Token::Number(5.0),
             Token::RightParen,
             Token::Star,
-            Token::Identifier(Ident("a".to_string()))
-            ];
+            Token::Identifier(Ident("a".to_string())),
+        ];
 
-            zip(tokens, expected_tokens).for_each(|(actual, expected)| assert_eq!(actual, expected))
+        zip(tokens, expected_tokens).for_each(|(actual, expected)| assert_eq!(actual, expected))
     }
 }

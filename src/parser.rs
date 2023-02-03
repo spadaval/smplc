@@ -3,7 +3,7 @@ use crate::{
     Program,
 };
 use log::{debug, info};
-use serde::{Serialize};
+use serde::Serialize;
 
 pub struct Parser {
     curr: Option<Token>,
@@ -251,17 +251,22 @@ pub fn parse(mut program: Program) -> Expression {
 mod tests {
     use super::*;
     use crate::Program;
-    use pretty_assertions::{assert_eq};
-    use std::{rc::Rc};
+    use pretty_assertions::assert_eq;
+    use std::rc::Rc;
 
     #[test]
     fn test_parse_expression() {
-        let program = parse(Program {
-            program: Rc::new("1+2".to_string()),
-        });
+        let mut parser = Parser::new(
+            (Program {
+                program: Rc::new("1+2".to_string()),
+            })
+            .tokens(),
+        );
+        let expr = ExpressionParser::parse(&mut parser).unwrap();
+
         use Expression::*;
 
         let expected_program = Add(Box::new(Constant(1.0)), Box::new(Constant(2.0)));
-        assert_eq!(program, expected_program);
+        assert_eq!(expr, expected_program);
     }
 }

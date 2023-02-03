@@ -10,10 +10,7 @@ use clap::error::Error;
 
 use tokenizer::Tokenizer;
 
-use crate::{
-    parser::{parse},
-    tokenizer::Token,
-};
+use crate::{parser::parse, tokenizer::Token};
 
 /// Simple program to greet a person
 #[derive(clap::Parser, Debug)]
@@ -72,5 +69,4 @@ fn main() {
 
     let ast = parse(p);
     println!("{ast:#?}");
-
 }
