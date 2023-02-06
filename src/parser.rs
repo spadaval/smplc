@@ -1,9 +1,25 @@
-use crate::{
-    tokenizer::{Ident, Token, Tokenizer},
-    Program,
-};
+use std::rc::Rc;
+
+use super::tokenizer::{Ident, State, Token, Tokenizer};
 use log::{debug, info};
 use serde::Serialize;
+
+#[derive(Clone)]
+pub struct SourceFile {
+    source_code: Rc<String>,
+}
+
+impl SourceFile {
+    pub fn tokens(&mut self) -> Tokenizer {
+        Tokenizer::new(self.source_code.clone())
+    }
+
+    pub fn new(arg: &str) -> SourceFile {
+        SourceFile {
+            source_code: Rc::new(arg.to_string()),
+        }
+    }
+}
 
 pub struct Parser {
     curr: Option<Token>,
@@ -21,6 +37,7 @@ impl Parser {
     // expect the current token to match some condition.
     // If so, advance the token stream and continue.
     // otherwise, return an error.
+    #[must_use = "Handle the failure case"]
     fn expect(&mut self, predicate: fn(&Token) -> bool) -> Result<Token, ParseError> {
         match self.curr.clone() {
             None => Err(ParseError {
@@ -39,8 +56,10 @@ impl Parser {
         }
     }
 
-    fn advance(&mut self) {
+    fn advance(&mut self) -> Option<Token> {
+        let token_to_return = self.curr.clone();
         self.curr = self.tokens.next();
+        return token_to_return;
     }
 }
 #[derive(Debug)]
@@ -49,11 +68,13 @@ pub struct ParseError {
 }
 
 pub struct BlockParser;
-
-pub struct AssignmentParser;
+struct StatementParser;
 pub struct ExpressionParser;
+pub struct RelationParser;
 struct TermParser;
 struct FactorParser;
+
+struct LValue;
 
 #[derive(Serialize, Debug, PartialEq)]
 pub enum Expression {
@@ -65,37 +86,44 @@ pub enum Expression {
     Divide(Box<Expression>, Box<Expression>),
 }
 
-struct Block {}
+#[derive(Debug, PartialEq)]
+pub struct Block(pub Vec<Statement>);
 
-pub enum ParseNode {
-    Expression(Expression),
-    Binding(Ident, Expression),
-    Block(Vec<ParseNode>),
-    Relation {
-        left: Expression,
-        compare_op: Token,
-        right: Expression,
-    },
+#[derive(Debug, PartialEq)]
+pub enum Designator {
+    Ident(Ident),
+    ArrayIndex(Ident, Expression),
+}
+
+#[derive(Debug, PartialEq)]
+pub struct Relation {
+    pub left: Expression,
+    pub compare_op: Token,
+    pub right: Expression,
+}
+
+#[derive(Debug, PartialEq)]
+pub enum Statement {
+    Assign(Designator, Expression),
     If {
-        condition: Box<ParseNode>,
+        condition: Relation,
         body: Block,
+        else_body: Option<Block>,
     },
     While {
-        condition: Box<ParseNode>,
+        condition: Relation,
         body: Block,
     },
 }
-pub type ParseResult = Result<ParseNode, ParseError>;
+
+#[derive(Debug)]
+pub struct ProgramForest {
+    pub roots: Vec<Statement>,
+}
 
 pub trait Parse {
-    type Item = ParseNode;
+    type Item = Statement;
     fn parse(parser: &mut Parser) -> Result<Self::Item, ParseError>;
-
-    fn err(&self, message: impl Into<String>) -> ParseResult {
-        Err(ParseError {
-            message: message.into(),
-        })
-    }
 }
 
 fn err<R>(message: impl Into<String>) -> Result<R, ParseError> {
@@ -103,72 +131,119 @@ fn err<R>(message: impl Into<String>) -> Result<R, ParseError> {
         message: message.into(),
     })
 }
-//use crate::Token::Identifier;
-// impl BlockParser {
-//     fn do_parse(&mut self, parser: &mut Parser) -> ParseResult {
-//         match parser.curr.clone() {
-//             Some(Token::Identifier(Ident(s))) if s == "var" => {
-//                 debug!("Trying to parse assignment");
-//                 parser.advance();
-//                 let assignment = AssignmentParser::parse(parser)?;
-//                 match assignment {
-//                     ParseNode::Assign(ref ident, num) => {
-//                         return Ok()
 
-//                         parser.variables.insert(ident, num);
-//                         info!("Assigned {} <- {}", ident, num);
-//                         return Ok(num);
-//                     }
-//                     _ => err("wtf"),
-//                 }
-//             }
-//             _ => {
-//                 let expr = ExpressionParser::parse(parser)?;
-//                 print!("Computation results: {:?} ", expr);
+impl Parse for LValue {
+    type Item = Designator;
 
-//                 loop {
-//                     match parser.curr.clone() {
-//                         Some(Token::Period) => {
-//                             parser.advance();
-//                             let expr = ExpressionParser::parse(parser)?;
-//                             print!(" {:?} ", expr);
-//                         }
-//                         _ => return Ok(Number(0.0)),
-//                     }
-//                 }
-//             }
-//         }
-//     }
-// }
+    fn parse(parser: &mut Parser) -> Result<Self::Item, ParseError> {
+        match parser.curr.clone() {
+            Some(Token::Identifier(ident)) => {
+                parser.advance();
+                return Ok(Designator::Ident(ident.clone()));
+            }
+            _ => err("Failed while parsing designator"),
+        }
+    }
+}
 
-// impl Parse for BlockParser {
-//     fn parse(parser: &mut Parser) -> ParseResult {
-//         loop {
-//             BlockParser.do_parse(parser)?;
-//             match parser.curr {
-//                 Some(Token::Period) => parser.advance(),
-//                 Some(t) => return err(format!("Unexpected extra characters after block: {:?}", t)),
-//                 None => return Ok(Number(0.0)),
-//             }
-//         }
-//     }
-// }
+impl Parse for RelationParser {
+    type Item = Relation;
 
-impl Parse for AssignmentParser {
-    fn parse(parser: &mut Parser) -> ParseResult {
-        let lvalue = parser.expect(|token| matches!(token, Token::Identifier(_)))?;
+    fn parse(parser: &mut Parser) -> Result<Self::Item, ParseError> {
+        let left = ExpressionParser::parse(parser).unwrap();
 
-        parser.expect(|token| matches!(token, Token::Assignment))?;
+        let compare_op = parser.advance().unwrap();
+        match compare_op {
+            Token::GreaterThan
+            | Token::LessThan
+            | Token::GreaterThanEqual
+            | Token::LessThanEqual => {}
+            _ => panic!("Invalid compare operation"),
+        }
 
-        debug!("lvalue: {:?} ", lvalue);
-        let expr = ExpressionParser::parse(parser)?;
-        let ident = if let Token::Identifier(ident) = lvalue {
-            ident
-        } else {
-            return err("wtf");
+        let right = ExpressionParser::parse(parser).unwrap();
+        return Ok(Relation {
+            left,
+            compare_op,
+            right,
+        });
+    }
+}
+
+impl Parse for StatementParser {
+    fn parse(parser: &mut Parser) -> Result<Self::Item, ParseError> {
+        let statement = match parser.curr.clone() {
+            Some(Token::Let) => {
+                parser.advance();
+                let lvalue = LValue::parse(parser).unwrap();
+                parser.expect(|it| matches!(it, Token::Assignment)).unwrap();
+                let expr = ExpressionParser::parse(parser).unwrap();
+                Ok(Statement::Assign(lvalue, expr))
+            }
+            Some(Token::Call) => todo!(),
+            Some(Token::If) => {
+                parser.advance();
+                let relation = RelationParser::parse(parser).unwrap();
+                parser.expect(|it| matches!(it, Token::Then)).unwrap();
+                let main_body = BlockParser::parse(parser).unwrap();
+                let else_body = match parser.curr {
+                    Some(Token::Else) => {
+                        parser.advance();
+                        Some(BlockParser::parse(parser).unwrap())
+                    }
+                    _ => None,
+                };
+                parser
+                    .expect(|it| matches!(it, Token::Fi))
+                    .expect("Unterminated if block");
+
+                Ok(Statement::If {
+                    condition: relation,
+                    body: main_body,
+                    else_body,
+                })
+            }
+            Some(Token::While) => {
+                parser.advance();
+                let relation = RelationParser::parse(parser).unwrap();
+                parser.expect(|it| matches!(it, Token::Do)).unwrap();
+                let main_body = BlockParser::parse(parser).unwrap();
+                parser.expect(|it| matches!(it, Token::Od)).unwrap();
+
+                Ok(Statement::While {
+                    condition: relation,
+                    body: main_body,
+                })
+            }
+            Some(Token::Return) => todo!(),
+            Some(t) => panic!("unexpected token {t:?} while parsing statement"),
+            None => err("Tried parsing statement with no tokens left"),
         };
+        // TODO find a less shitty way to do this
+        while parser.curr == Some(Token::Semicolon) {
+            parser.advance();
+        }
+        statement
+    }
+}
 
-        Ok(ParseNode::Binding(ident, expr))
+impl Parse for BlockParser {
+    type Item = Block;
+    fn parse(parser: &mut Parser) -> Result<Block, ParseError> {
+        let mut statements = Vec::new();
+        loop {
+            let statement = StatementParser::parse(parser)?;
+            statements.push(statement);
+            match &parser.curr {
+                Some(Token::Semicolon) => {
+                    parser.advance();
+                    continue;
+                }
+                Some(x) if x.should_end_block() => return Ok(Block(statements)),
+                None => return Ok(Block(statements)),
+                Some(t) => continue,
+            }
+        }
     }
 }
 
@@ -242,23 +317,28 @@ impl Parse for FactorParser {
     }
 }
 
-pub fn parse(mut program: Program) -> Expression {
+// TODO handle functions and all the other crap
+pub fn parse(mut program: SourceFile) -> ProgramForest {
     let mut parser = Parser::new(program.tokens());
-    ExpressionParser::parse(&mut parser).expect("Failed to parse expression")
+    let mut statements = Vec::new();
+    while let Ok(statement) = StatementParser::parse(&mut parser) {
+        statements.push(statement);
+    }
+    ProgramForest { roots: statements }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Program;
+    use crate::SourceFile;
     use pretty_assertions::assert_eq;
     use std::rc::Rc;
 
     #[test]
     fn test_parse_expression() {
         let mut parser = Parser::new(
-            (Program {
-                program: Rc::new("1+2".to_string()),
+            (SourceFile {
+                source_code: Rc::new("1+2".to_string()),
             })
             .tokens(),
         );
@@ -268,5 +348,115 @@ mod tests {
 
         let expected_program = Add(Box::new(Constant(1.0)), Box::new(Constant(2.0)));
         assert_eq!(expr, expected_program);
+    }
+
+    #[test]
+    fn test_assign() {
+        let mut parser = Parser::new(
+            (SourceFile {
+                source_code: Rc::new("let a <- 1+2".to_string()),
+            })
+            .tokens(),
+        );
+        let expr = StatementParser::parse(&mut parser).unwrap();
+
+        use Expression::*;
+
+        let expected_program = Statement::Assign(
+            Designator::Ident(Ident("a".to_string())),
+            Add(Box::new(Constant(1.0)), Box::new(Constant(2.0))),
+        );
+        assert_eq!(expected_program, expr);
+    }
+    #[test]
+    fn test_parse_if() {
+        let program = r"
+if a<1 
+then 
+    let x <- 10; 
+    let a <- a + 1 
+else 
+    let x <- 2 
+fi
+";
+
+        let mut parser = Parser::new(SourceFile::new(program).tokens());
+        let expr = StatementParser::parse(&mut parser).unwrap();
+
+        let expected_program = Statement::If {
+            condition: Relation {
+                left: Expression::Identifier(Ident("a".to_string())),
+                compare_op: Token::LessThan,
+                right: Expression::Constant(1.0),
+            },
+            body: Block(vec![
+                Statement::Assign(
+                    Designator::Ident(Ident("x".to_string())),
+                    Expression::Constant(10.0),
+                ),
+                Statement::Assign(
+                    Designator::Ident(Ident("a".to_string())),
+                    Expression::Add(
+                        Box::new(Expression::Identifier(Ident("a".to_string()))),
+                        Box::new(Expression::Constant(1.0)),
+                    ),
+                ),
+            ]),
+            else_body: Some(Block(vec![Statement::Assign(
+                Designator::Ident(Ident("x".to_string())),
+                Expression::Constant(2.0),
+            )])),
+        };
+        assert_eq!(expected_program, expr);
+    }
+
+    #[test]
+    fn test_while() {
+        let mut parser = Parser::new(
+            (SourceFile {
+                source_code: Rc::new("while a<1 do let x <- 10; let a <- a + 1 od".to_string()),
+            })
+            .tokens(),
+        );
+        let expr = StatementParser::parse(&mut parser).unwrap();
+
+        let expected_program = Statement::While {
+            condition: Relation {
+                left: Expression::Identifier(Ident("a".to_string())),
+                compare_op: Token::LessThan,
+                right: Expression::Constant(1.0),
+            },
+            body: Block(vec![
+                Statement::Assign(
+                    Designator::Ident(Ident("x".to_string())),
+                    Expression::Constant(10.0),
+                ),
+                Statement::Assign(
+                    Designator::Ident(Ident("a".to_string())),
+                    Expression::Add(
+                        Box::new(Expression::Identifier(Ident("a".to_string()))),
+                        Box::new(Expression::Constant(1.0)),
+                    ),
+                ),
+            ]),
+        };
+        assert_eq!(expected_program, expr);
+    }
+
+    #[test]
+    fn test_multiline() {
+        let _ = env_logger::builder().is_test(true).try_init();
+        let program = r"
+            let a <- 0;
+            let b <- 10;
+            if a < b
+            then 
+                let b <- b + a;
+            else 
+                let a <- a + b;
+            fi
+        ";
+        let forest = parse(crate::SourceFile::new(program));
+        println!("{forest:#?}");
     }
 }

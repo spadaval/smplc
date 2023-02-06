@@ -5,12 +5,12 @@ use std::{
 
 use log::{debug, error, info};
 use serde::{Deserialize, Serialize};
-#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize, Eq, Hash)]
 pub struct Ident(pub std::string::String);
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Token {
-    String(std::string::String),
+    //String(std::string::String),
     Number(f32),
     Identifier(Ident),
     // arithmetic
@@ -30,12 +30,26 @@ pub enum Token {
     Assignment,
     // keywords
     Var,
+    Let,
+    Call,
     If,
     Then,
+    Else,
     Fi,
     While,
+    Return,
     Do,
     Od,
+    Semicolon,
+}
+
+impl Token {
+    pub fn should_end_block(&self) -> bool {
+        match self {
+            Token::Fi | Token::Od | Token::Else => true,
+            _ => false,
+        }
+    }
 }
 
 fn identifier_to_keyword(token: Token) -> Option<Token> {
@@ -45,7 +59,12 @@ fn identifier_to_keyword(token: Token) -> Option<Token> {
     };
     match ident.0.as_str() {
         "var" => Some(Token::Var),
+        "let" => Some(Token::Let),
+        "then" => Some(Token::Then),
+        "call" => Some(Token::Call),
+        "return" => Some(Token::Return),
         "if" => Some(Token::If),
+        "else" => Some(Token::Else),
         "fi" => Some(Token::Fi),
         "while" => Some(Token::While),
         "do" => Some(Token::Do),
@@ -163,6 +182,7 @@ impl Iterator for Tokenizer {
                         self.state = new_state;
                     }
                     if response.token.is_some() {
+                        info!("Emit {:?}", response.token);
                         return response.token;
                     }
                 }
@@ -180,7 +200,13 @@ impl State for Waiting {
             'a'..='z' => transition(Ident::new()),
             '<' => match next {
                 Some('-') => transition_and_advance(Assign::new()),
+                Some('=') => emit(Token::LessThanEqual),
                 _ => emit(Token::LessThan),
+            },
+            '>' => match next {
+                Some('-') => transition_and_advance(Assign::new()),
+                Some('=') => emit(Token::GreaterThanEqual),
+                _ => emit(Token::GreaterThan),
             },
             '+' => emit(Token::Plus),
             '-' => emit(Token::Minus),
@@ -189,9 +215,10 @@ impl State for Waiting {
             '(' => emit(Token::LeftParen),
             ')' => emit(Token::RightParen),
             '.' => emit(Token::Period),
-            ' ' => pass(),
+            ';' => emit(Token::Semicolon),
+            c if c.is_whitespace() => pass(),
             _ => Err(TokenizerError {
-                message: format!("Recieved unknown character {curr} while in Waiting"),
+                message: format!("Recieved unknown character '{curr}' while in Waiting"),
             }),
         }
     }
@@ -278,16 +305,13 @@ impl State for Assign {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Program;
+    use crate::SourceFile;
     use pretty_assertions::assert_eq;
     use std::{iter::zip, rc::Rc};
 
     #[test]
     fn test_tokenize_expression() {
-        let tokens = Program {
-            program: Rc::new("1+2-(4+5) * a".to_string()),
-        }
-        .tokens();
+        let tokens = SourceFile::new("1+2-(4+5) * a").tokens();
 
         let expected_tokens = vec![
             Token::Number(1.0),
@@ -304,5 +328,22 @@ mod tests {
         ];
 
         zip(tokens, expected_tokens).for_each(|(actual, expected)| assert_eq!(actual, expected))
+    }
+
+    #[test]
+    fn test_multiline() {
+        let program = r"
+            let a <- 0;
+            let b <- 10;
+            if a < b
+            then 
+                let b <- b + a;
+            else 
+                let a <- a + b;
+            fi
+        ";
+        let tokens = SourceFile::new(program).tokens().collect::<Vec<Token>>();
+        println!("{tokens:?}");
+        assert_eq!(tokens.len(), 31);
     }
 }
