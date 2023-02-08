@@ -1,4 +1,5 @@
 mod ssa;
 mod ssa_render;
 
-use ssa::lower_program;
+pub use ssa::lower_program;
+pub use ssa_render::Graph;

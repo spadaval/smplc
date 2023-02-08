@@ -2,6 +2,7 @@ use std::{collections::HashMap, fmt::Display};
 
 use termgraph::ValueFormatter;
 
+//TODO remove a bunch of the `pub` declarations and provide controlled access methods instead 
 use crate::{
     parser::{Block, Designator, Expression, ProgramForest, Relation, Statement},
     tokenizer::Ident,
@@ -9,41 +10,42 @@ use crate::{
 
 // This design is shamelessly copied from `rustc`
 #[derive(Debug, Clone, Copy)]
-struct BasicBlock(usize);
+pub struct BasicBlock(pub usize);
 
-#[derive(Debug)]
-struct Instruction {
-    kind: InstructionKind,
-    dominating_instruction: Option<InstructionId>,
-    id: InstructionId,
+#[derive(Debug, Clone)]
+pub struct Instruction {
+    pub kind: InstructionKind,
+    pub dominating_instruction: Option<InstructionId>,
+    pub id: InstructionId,
 }
-#[derive(Debug)]
-enum BasicOpKind {
+#[derive(Debug,  Clone)]
+pub enum BasicOpKind {
     Add,
     Subtract,
 }
-#[derive(Debug)]
-enum ImmediateOpKind {
+#[derive(Debug, Clone)]
+pub enum ImmediateOpKind {
     AddI,
     SubtractI,
 }
 
-#[derive(Debug)]
-enum InstructionKind {
+#[derive(Debug, Clone)]
+pub enum InstructionKind {
     Constant(f32),
     BasicOp(BasicOpKind, InstructionId, InstructionId),
+    // TODO do we even need this?
     ImmediateOp(ImmediateOpKind, InstructionId, InstructionId),
 }
 
-#[derive(Debug)]
-struct Comparison {
+#[derive(Debug, Clone)]
+pub struct Comparison {
     kind: ComparisonKind,
     value: InstructionId,
 }
 // For some reason DLX has all of these instructions. Might as well use them.
 // They are easy enough to emulate.
-#[derive(Debug)]
-enum ComparisonKind {
+#[derive(Debug, Clone)]
+pub enum ComparisonKind {
     LtZero,
     LteZero,
     GtZero,
@@ -52,8 +54,8 @@ enum ComparisonKind {
     NeZero,
 }
 
-#[derive(Debug)]
-enum Terminator {
+#[derive(Debug, Clone)]
+pub enum Terminator {
     Goto(BasicBlock),
     ConditionalBranch {
         condition: Comparison,
@@ -62,22 +64,22 @@ enum Terminator {
     },
 }
 
-#[derive(Debug)]
-enum HeaderStatement {
+#[derive(Debug, Clone)]
+pub enum HeaderStatement {
     // TODO this is probably wrong
     Kill(InstructionId),
     Phi(InstructionId, InstructionId),
 }
 
-#[derive(Debug)]
-struct SymbolTable(HashMap<Ident, InstructionId>);
+#[derive(Debug, Clone)]
+pub struct SymbolTable(pub HashMap<Ident, InstructionId>);
 
-#[derive(Debug)]
-struct BasicBlockData {
-    header: Vec<HeaderStatement>,
-    statements: Vec<Instruction>,
-    terminator: Option<Terminator>,
-    symbol_table: SymbolTable,
+#[derive(Debug, Clone)]
+pub struct BasicBlockData {
+    pub header: Vec<HeaderStatement>,
+    pub statements: Vec<Instruction>,
+    pub terminator: Option<Terminator>,
+    pub symbol_table: SymbolTable,
 }
 
 impl BasicBlockData {
@@ -88,11 +90,11 @@ impl BasicBlockData {
             terminator: None,
             symbol_table: SymbolTable(Default::default()),
         }
-    }
+    } 
 }
 
 #[derive(Eq, Hash, PartialEq, Debug, Copy, Clone)]
-struct InstructionId(usize);
+pub struct InstructionId(pub usize);
 
 #[derive(Debug)]
 pub struct ControlFlowGraph {
@@ -127,7 +129,7 @@ impl ControlFlowGraph {
 
         const_block.statements.push(instruction);
         cfg.add_block(const_block);
-        let mut start_block = BasicBlockData::new();
+        let start_block = BasicBlockData::new();
         cfg.add_block(start_block);
 
         cfg
@@ -204,6 +206,18 @@ impl ControlFlowGraph {
 
     fn goto(&mut self, block: BasicBlock, target: BasicBlock) {
         self.set_terminator(block, Terminator::Goto(target))
+    }
+
+    fn iter_blocks(&self) -> impl Iterator<Item = (BasicBlock, BasicBlockData)> {
+        self.basic_blocks
+            .clone()
+            .into_iter()
+            .enumerate()
+            .map(move |(id, b)| (BasicBlock(id), b))
+    }
+
+    pub fn blocks(&self) -> impl Iterator<Item=(BasicBlock, BasicBlockData)> {
+        self.basic_blocks.clone().into_iter().enumerate().map(|(id, data)| (BasicBlock(id), data))
     }
 
     fn render(&self) {
