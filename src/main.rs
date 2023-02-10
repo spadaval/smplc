@@ -2,6 +2,7 @@ use std::{fs::File, io::Read};
 
 use clap::error::Error;
 
+use pretty_env_logger::env_logger;
 use smplc::{parse, SourceFile, Token};
 
 /// Simple program to greet a person

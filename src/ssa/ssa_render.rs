@@ -1,4 +1,4 @@
-use std::fmt::{format, Write};
+use std::fmt::Write;
 
 use super::ssa::{self, BasicBlock, BasicBlockData, ControlFlowGraph, InstructionKind};
 
@@ -14,7 +14,7 @@ pub struct Graph {
 }
 
 impl Graph {
-    pub fn new(cfg: ssa::ControlFlowGraph) -> Self {
+    pub fn new(cfg: ControlFlowGraph) -> Self {
         let blocks = cfg.blocks().collect::<Vec<(BasicBlock, BasicBlockData)>>();
         let mut edges = Vec::new();
         for (block, block_data) in &blocks {
@@ -79,7 +79,6 @@ struct Block {
     id: usize,
     header: Vec<Instruction>,
     instructions: Vec<Instruction>,
-    terminator: Option<ssa::Terminator>,
 }
 
 impl Block {
@@ -101,7 +100,6 @@ impl Block {
             id: block.0,
             header,
             instructions,
-            terminator: block_data.terminator.clone(),
         }
     }
 
@@ -210,15 +208,17 @@ mod tests {
 
     #[test]
     fn test_if_dot() {
+        let _ = pretty_env_logger::init();
+
         let program = r"
             let a <- 0;
             let b <- 10;
+            let b <- b+a;
             if a < b
             then 
                 let b <- b + a;
-            else 
-                let a <- a + b;
             fi
+            let c <- b+a;
         ";
         let forest = parse(crate::SourceFile::new(program));
         //println!("{forest:#?}");

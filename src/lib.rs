@@ -7,3 +7,4 @@ pub use parser::parse;
 pub use parser::SourceFile;
 pub use tokenizer::Tokenizer;
 pub use tokenizer::Token;
+pub use ssa::Graph;

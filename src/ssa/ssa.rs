@@ -1,8 +1,9 @@
 use std::{collections::HashMap, fmt::Display};
 
+use log::{debug, error};
 use termgraph::ValueFormatter;
 
-//TODO remove a bunch of the `pub` declarations and provide controlled access methods instead 
+//TODO remove a bunch of the `pub` declarations and provide controlled access methods instead
 use crate::{
     parser::{Block, Designator, Expression, ProgramForest, Relation, Statement},
     tokenizer::Ident,
@@ -18,7 +19,7 @@ pub struct Instruction {
     pub dominating_instruction: Option<InstructionId>,
     pub id: InstructionId,
 }
-#[derive(Debug,  Clone)]
+#[derive(Debug, Clone)]
 pub enum BasicOpKind {
     Add,
     Subtract,
@@ -90,7 +91,7 @@ impl BasicBlockData {
             terminator: None,
             symbol_table: SymbolTable(Default::default()),
         }
-    } 
+    }
 }
 
 #[derive(Eq, Hash, PartialEq, Debug, Copy, Clone)]
@@ -128,9 +129,11 @@ impl ControlFlowGraph {
         };
 
         const_block.statements.push(instruction);
-        cfg.add_block(const_block);
+        let const_block_id = cfg.add_block(const_block);
         let start_block = BasicBlockData::new();
-        cfg.add_block(start_block);
+        let start_block_id = cfg.add_block(start_block);
+
+        cfg.goto(const_block_id, start_block_id);
 
         cfg
     }
@@ -201,6 +204,9 @@ impl ControlFlowGraph {
     }
 
     fn set_terminator(&mut self, block: BasicBlock, terminator: Terminator) {
+        if self.block_data_mut(block).terminator.is_some() {
+            panic!();
+        }
         self.block_data_mut(block).terminator = Some(terminator);
     }
 
@@ -216,34 +222,12 @@ impl ControlFlowGraph {
             .map(move |(id, b)| (BasicBlock(id), b))
     }
 
-    pub fn blocks(&self) -> impl Iterator<Item=(BasicBlock, BasicBlockData)> {
-        self.basic_blocks.clone().into_iter().enumerate().map(|(id, data)| (BasicBlock(id), data))
-    }
-
-    fn render(&self) {
-        use termgraph::{Config, DirectedGraph, IDFormatter};
-        let mut graph = DirectedGraph::new();
-
-        graph.add_nodes(self.basic_blocks.iter().enumerate());
-        //graph.add_nodes([(0, "first"), (1, "second"), (2, "third")]);
-
-        let edges = self.basic_blocks.iter().enumerate().flat_map(
-            |(block_id, block_data)| -> Vec<(usize, usize)> {
-                match &block_data.terminator {
-                    Some(Terminator::Goto(target)) => vec![(block_id, target.0)],
-                    Some(Terminator::ConditionalBranch {
-                        condition,
-                        target,
-                        fallthrough,
-                    }) => vec![(block_id, target.0), (block_id, fallthrough.0)],
-                    None => Vec::new(),
-                }
-            },
-        );
-        graph.add_edges(edges);
-
-        let value_config = Config::new(ValueFormatter::new(), 3).default_colors();
-        termgraph::display(&graph, &value_config);
+    pub fn blocks(&self) -> impl Iterator<Item = (BasicBlock, BasicBlockData)> {
+        self.basic_blocks
+            .clone()
+            .into_iter()
+            .enumerate()
+            .map(|(id, data)| (BasicBlock(id), data))
     }
 }
 
@@ -327,21 +311,23 @@ fn lower_statement(
         }
         Statement::Assign(Designator::ArrayIndex(_, _), expr) => todo!(),
         Statement::If {
-            condition,
-            body,
-            else_body,
+            ref condition,
+            ref body,
+            ref else_body,
         } => {
+            debug!("Lowering statement {:?}", statement.clone());
             let header_block = block;
 
             let follow_block = cfg.new_block();
 
             let new_block = cfg.new_block();
-            let main_body_blk = lower_block(cfg, new_block, body);
+            let main_body_blk = lower_block(cfg, new_block, body.clone());
+
             match else_body {
                 Some(else_body) => {
                     let else_body_blk = cfg.new_block();
 
-                    let condition = lower_relation(cfg, header_block, condition);
+                    let condition = lower_relation(cfg, header_block, condition.clone());
                     cfg.set_terminator(
                         header_block,
                         Terminator::ConditionalBranch {
@@ -350,11 +336,21 @@ fn lower_statement(
                             fallthrough: else_body_blk,
                         },
                     );
-                    let else_body_blk = lower_block(cfg, else_body_blk, else_body);
+                    let old_else_body_blk = else_body_blk;
+                    let else_body_blk = lower_block(cfg, else_body_blk, else_body.clone());
+                    debug!(
+                        "Lowered else_body from block {} to block {}",
+                        old_else_body_blk.0, else_body_blk.0
+                    );
                     cfg.goto(else_body_blk, header_block);
                 }
                 None => {
-                    let condition = lower_relation(cfg, header_block, condition);
+                    let condition = lower_relation(cfg, header_block, condition.clone());
+                    debug!("Lowered condition to block {}", header_block.0);
+                    debug!(
+                        "Add edge {} -(target)-> {}, {} -(fallthrough)-> {}",
+                        header_block.0, main_body_blk.0, header_block.0, follow_block.0
+                    );
                     cfg.set_terminator(
                         header_block,
                         Terminator::ConditionalBranch {
@@ -392,7 +388,9 @@ pub fn lower_program(forest: ProgramForest) -> ControlFlowGraph {
 
 #[cfg(test)]
 mod tests {
-    use crate::parser::{parse, ProgramForest};
+    use pretty_env_logger::env_logger;
+
+    use crate::parser::parse;
 
     use super::lower_program;
 
@@ -416,8 +414,6 @@ mod tests {
             if a < b
             then 
                 let b <- b + a;
-            else 
-                let a <- a + b;
             fi
         ";
         let forest = parse(crate::SourceFile::new(program));

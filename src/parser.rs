@@ -76,7 +76,7 @@ struct FactorParser;
 
 struct LValue;
 
-#[derive(Serialize, Debug, PartialEq)]
+#[derive(Serialize, Debug, PartialEq, Clone)]
 pub enum Expression {
     Constant(f32),
     Identifier(Ident),
@@ -86,23 +86,23 @@ pub enum Expression {
     Divide(Box<Expression>, Box<Expression>),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Block(pub Vec<Statement>);
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Designator {
     Ident(Ident),
     ArrayIndex(Ident, Expression),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Relation {
     pub left: Expression,
     pub compare_op: Token,
     pub right: Expression,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Statement {
     Assign(Designator, Expression),
     If {
@@ -241,7 +241,7 @@ impl Parse for BlockParser {
                 }
                 Some(x) if x.should_end_block() => return Ok(Block(statements)),
                 None => return Ok(Block(statements)),
-                Some(t) => continue,
+                Some(_) => continue,
             }
         }
     }
@@ -332,6 +332,7 @@ mod tests {
     use super::*;
     use crate::SourceFile;
     use pretty_assertions::assert_eq;
+    use pretty_env_logger::env_logger;
     use std::rc::Rc;
 
     #[test]
@@ -445,7 +446,7 @@ fi
 
     #[test]
     fn test_multiline() {
-        let _ = env_logger::builder().is_test(true).try_init();
+        let _ = pretty_env_logger::init();
         let program = r"
             let a <- 0;
             let b <- 10;
