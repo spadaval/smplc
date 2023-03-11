@@ -69,6 +69,7 @@ pub struct ParseError {
 
 pub struct BlockParser;
 struct StatementParser;
+struct CallParser;
 pub struct ExpressionParser;
 pub struct RelationParser;
 struct TermParser;
@@ -77,13 +78,20 @@ struct FactorParser;
 struct LValue;
 
 #[derive(Serialize, Debug, PartialEq, Clone)]
+pub struct FunctionCall {
+    pub function_name: Ident,
+    pub arguments: Vec<Expression>,
+}
+
+#[derive(Serialize, Debug, PartialEq, Clone)]
 pub enum Expression {
-    Constant(f32),
+    Constant(i32),
     Identifier(Ident),
     Add(Box<Expression>, Box<Expression>),
     Subtract(Box<Expression>, Box<Expression>),
     Multiply(Box<Expression>, Box<Expression>),
     Divide(Box<Expression>, Box<Expression>),
+    Call(FunctionCall),
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -114,6 +122,7 @@ pub enum Statement {
         condition: Relation,
         body: Block,
     },
+    Call(FunctionCall),
 }
 
 #[derive(Debug)]
@@ -170,6 +179,37 @@ impl Parse for RelationParser {
     }
 }
 
+impl Parse for CallParser {
+    type Item = FunctionCall;
+
+    fn parse(parser: &mut Parser) -> Result<Self::Item, ParseError> {
+        let function_name = match parser.curr.clone() {
+            Some(Token::Identifier(ident)) => ident,
+            _ => return err("Was expecting a function name"),
+        };
+        parser.advance();
+        parser.expect(|it| matches!(it, Token::LeftParen))?;
+        let mut arguments = Vec::new();
+        loop {
+            match parser.curr {
+                Some(Token::RightParen) => {
+                    parser.advance();
+                    return Ok(FunctionCall {
+                        function_name,
+                        arguments,
+                    });
+                }
+                _ => {
+                    arguments.push(ExpressionParser::parse(parser)?);
+                    if parser.curr == Some(Token::Comma) {
+                        parser.advance();
+                    }
+                }
+            }
+        }
+    }
+}
+
 impl Parse for StatementParser {
     fn parse(parser: &mut Parser) -> Result<Self::Item, ParseError> {
         let statement = match parser.curr.clone() {
@@ -180,7 +220,11 @@ impl Parse for StatementParser {
                 let expr = ExpressionParser::parse(parser).unwrap();
                 Ok(Statement::Assign(lvalue, expr))
             }
-            Some(Token::Call) => todo!(),
+            Some(Token::Call) => {
+                parser.advance();
+                let function_call = CallParser::parse(parser)?;
+                Ok(Statement::Call(function_call))
+            }
             Some(Token::If) => {
                 parser.advance();
                 let relation = RelationParser::parse(parser).unwrap();
@@ -250,6 +294,11 @@ impl Parse for BlockParser {
 impl Parse for ExpressionParser {
     type Item = Expression;
     fn parse(parser: &mut Parser) -> Result<Expression, ParseError> {
+        if parser.curr == Some(Token::Call) {
+            parser.advance();
+            return Ok(Expression::Call(CallParser::parse(parser)?));
+        }
+
         let mut term = Box::new(TermParser::parse(parser).unwrap());
 
         loop {
@@ -347,7 +396,7 @@ mod tests {
 
         use Expression::*;
 
-        let expected_program = Add(Box::new(Constant(1.0)), Box::new(Constant(2.0)));
+        let expected_program = Add(Box::new(Constant(1)), Box::new(Constant(2)));
         assert_eq!(expr, expected_program);
     }
 
@@ -365,7 +414,7 @@ mod tests {
 
         let expected_program = Statement::Assign(
             Designator::Ident(Ident("a".to_string())),
-            Add(Box::new(Constant(1.0)), Box::new(Constant(2.0))),
+            Add(Box::new(Constant(1)), Box::new(Constant(2))),
         );
         assert_eq!(expected_program, expr);
     }
@@ -388,24 +437,24 @@ fi
             condition: Relation {
                 left: Expression::Identifier(Ident("a".to_string())),
                 compare_op: Token::LessThan,
-                right: Expression::Constant(1.0),
+                right: Expression::Constant(1),
             },
             body: Block(vec![
                 Statement::Assign(
                     Designator::Ident(Ident("x".to_string())),
-                    Expression::Constant(10.0),
+                    Expression::Constant(10),
                 ),
                 Statement::Assign(
                     Designator::Ident(Ident("a".to_string())),
                     Expression::Add(
                         Box::new(Expression::Identifier(Ident("a".to_string()))),
-                        Box::new(Expression::Constant(1.0)),
+                        Box::new(Expression::Constant(1)),
                     ),
                 ),
             ]),
             else_body: Some(Block(vec![Statement::Assign(
                 Designator::Ident(Ident("x".to_string())),
-                Expression::Constant(2.0),
+                Expression::Constant(2),
             )])),
         };
         assert_eq!(expected_program, expr);
@@ -425,18 +474,18 @@ fi
             condition: Relation {
                 left: Expression::Identifier(Ident("a".to_string())),
                 compare_op: Token::LessThan,
-                right: Expression::Constant(1.0),
+                right: Expression::Constant(1),
             },
             body: Block(vec![
                 Statement::Assign(
                     Designator::Ident(Ident("x".to_string())),
-                    Expression::Constant(10.0),
+                    Expression::Constant(10),
                 ),
                 Statement::Assign(
                     Designator::Ident(Ident("a".to_string())),
                     Expression::Add(
                         Box::new(Expression::Identifier(Ident("a".to_string()))),
-                        Box::new(Expression::Constant(1.0)),
+                        Box::new(Expression::Constant(1)),
                     ),
                 ),
             ]),
@@ -457,6 +506,16 @@ fi
                 let a <- a + b;
             fi
         ";
+        let forest = parse(crate::SourceFile::new(program));
+        println!("{forest:#?}");
+    }
+    #[test]
+    fn test_parser_functions() {
+        let _ = pretty_env_logger::init();
+        let program = r"
+            let a <- call InputNum();        
+            call OutputNum(c);
+            ";
         let forest = parse(crate::SourceFile::new(program));
         println!("{forest:#?}");
     }

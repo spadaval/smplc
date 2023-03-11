@@ -1,7 +1,6 @@
 use std::{collections::HashMap, fmt::Display};
 
-use log::{debug, error};
-use termgraph::ValueFormatter;
+use log::{debug, error, info, warn};
 
 //TODO remove a bunch of the `pub` declarations and provide controlled access methods instead
 use crate::{
@@ -10,8 +9,8 @@ use crate::{
 };
 
 // This design is shamelessly copied from `rustc`
-#[derive(Debug, Clone, Copy)]
-pub struct BasicBlock(pub usize);
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BlockId(pub usize);
 
 #[derive(Debug, Clone)]
 pub struct Instruction {
@@ -20,22 +19,22 @@ pub struct Instruction {
     pub id: InstructionId,
 }
 #[derive(Debug, Clone)]
+pub struct HeaderInstruction {
+    pub kind: HeaderStatementKind,
+    pub id: InstructionId,
+}
+#[derive(Debug, Clone)]
 pub enum BasicOpKind {
     Add,
     Subtract,
 }
-#[derive(Debug, Clone)]
-pub enum ImmediateOpKind {
-    AddI,
-    SubtractI,
-}
 
 #[derive(Debug, Clone)]
 pub enum InstructionKind {
-    Constant(f32),
+    Constant(i32),
     BasicOp(BasicOpKind, InstructionId, InstructionId),
-    // TODO do we even need this?
-    ImmediateOp(ImmediateOpKind, InstructionId, InstructionId),
+    Read,
+    Write(InstructionId),
 }
 
 #[derive(Debug, Clone)]
@@ -57,17 +56,16 @@ pub enum ComparisonKind {
 
 #[derive(Debug, Clone)]
 pub enum Terminator {
-    Goto(BasicBlock),
+    Goto(BlockId),
     ConditionalBranch {
         condition: Comparison,
-        target: BasicBlock,
-        fallthrough: BasicBlock,
+        target: BlockId,
+        fallthrough: BlockId,
     },
 }
 
 #[derive(Debug, Clone)]
-pub enum HeaderStatement {
-    // TODO this is probably wrong
+pub enum HeaderStatementKind {
     Kill(InstructionId),
     Phi(InstructionId, InstructionId),
 }
@@ -77,7 +75,7 @@ pub struct SymbolTable(pub HashMap<Ident, InstructionId>);
 
 #[derive(Debug, Clone)]
 pub struct BasicBlockData {
-    pub header: Vec<HeaderStatement>,
+    pub header: Vec<HeaderInstruction>,
     pub statements: Vec<Instruction>,
     pub terminator: Option<Terminator>,
     pub symbol_table: SymbolTable,
@@ -104,70 +102,42 @@ pub struct ControlFlowGraph {
 }
 
 impl ControlFlowGraph {
-    fn get_block(&self, block_id: BasicBlock) -> &BasicBlockData {
-        return &self.basic_blocks[block_id.0];
-    }
-    fn add_block(&mut self, block: BasicBlockData) -> BasicBlock {
-        let new_block_id = self.basic_blocks.len();
-        self.basic_blocks.push(block);
-        BasicBlock(new_block_id)
-    }
-    fn update_block(&mut self, block: BasicBlock, block_data: BasicBlockData) {
-        self.basic_blocks[block.0] = block_data;
-    }
-
     fn new() -> Self {
         let mut cfg = ControlFlowGraph {
             basic_blocks: Vec::new(),
             instruction_count: 0,
         };
-        let mut const_block = BasicBlockData::new();
-        let instruction = Instruction {
-            kind: InstructionKind::Constant(0.0),
-            dominating_instruction: None,
-            id: InstructionId(0),
-        };
+        let const_block_id = cfg.add_block(BasicBlockData::new());
+        cfg.get_constant(0);
 
-        const_block.statements.push(instruction);
-        let const_block_id = cfg.add_block(const_block);
-        let start_block = BasicBlockData::new();
-        let start_block_id = cfg.add_block(start_block);
+        let start_block_id = cfg.add_block(BasicBlockData::new());
 
         cfg.goto(const_block_id, start_block_id);
 
         cfg
     }
 
-    fn zero_value(&self) -> InstructionId {
-        return InstructionId(0);
-    }
-
-    fn start_block(&self) -> BasicBlock {
+    fn start_block(&self) -> BlockId {
         assert!(self.basic_blocks.len() >= 2);
-        BasicBlock(1)
+        BlockId(1)
     }
 
-    fn update_symbol(&mut self, block: BasicBlock, ident: Ident, val: InstructionId) {
+    fn get_block(&self, block_id: BlockId) -> &BasicBlockData {
+        return &self.basic_blocks[block_id.0];
+    }
+
+    fn add_block(&mut self, block: BasicBlockData) -> BlockId {
+        let new_block_id = self.basic_blocks.len();
+        self.basic_blocks.push(block);
+        BlockId(new_block_id)
+    }
+
+    fn zero_value(&mut self) -> InstructionId {
+        return self.get_constant(0);
+    }
+
+    fn update_symbol(&mut self, block: BlockId, ident: Ident, val: InstructionId) {
         self.basic_blocks[block.0].symbol_table.0.insert(ident, val);
-    }
-
-    fn get_symbol(&mut self, block: BasicBlock, ident: Ident) -> Option<InstructionId> {
-        self.basic_blocks[block.0]
-            .symbol_table
-            .0
-            .get(&ident)
-            .copied()
-    }
-
-    fn add_constant(&mut self, c: f32) -> InstructionId {
-        // TODO dedup constants
-        let new_instruction = Instruction {
-            kind: InstructionKind::Constant(c),
-            dominating_instruction: None,
-            id: InstructionId(0),
-        };
-        self.basic_blocks[0].statements.push(new_instruction);
-        return InstructionId(0);
     }
 
     fn issue_instruction_id(&mut self) -> InstructionId {
@@ -176,15 +146,11 @@ impl ControlFlowGraph {
         return new_id;
     }
 
-    fn block_data_mut(&mut self, blk: BasicBlock) -> &mut BasicBlockData {
+    fn block_data_mut(&mut self, blk: BlockId) -> &mut BasicBlockData {
         &mut self.basic_blocks[blk.0]
     }
 
-    fn add_instruction(
-        &mut self,
-        block: BasicBlock,
-        instruction: InstructionKind,
-    ) -> InstructionId {
+    fn add_instruction(&mut self, block: BlockId, instruction: InstructionKind) -> InstructionId {
         let new_id = self.issue_instruction_id();
         let data = self.block_data_mut(block);
         let instruction = Instruction {
@@ -197,37 +163,118 @@ impl ControlFlowGraph {
         new_id
     }
 
-    fn new_block(&mut self) -> BasicBlock {
-        let data = BasicBlockData::new();
-        self.basic_blocks.push(data);
-        BasicBlock(self.basic_blocks.len() - 1)
+    fn add_header_statement(
+        &mut self,
+        block: BlockId,
+        instruction: HeaderStatementKind,
+    ) -> InstructionId {
+        let new_id = self.issue_instruction_id();
+        let data = self.block_data_mut(block);
+        let instruction = HeaderInstruction {
+            kind: instruction,
+            id: new_id,
+        };
+
+        data.header.push(instruction);
+        new_id
     }
 
-    fn set_terminator(&mut self, block: BasicBlock, terminator: Terminator) {
+    //TODO cache this maybe?
+    fn predeccessors(&self, block: BlockId) -> Vec<BlockId> {
+        self.blocks()
+            .filter_map(|(id, data)| match data.terminator {
+                Some(Terminator::ConditionalBranch {
+                    condition: _,
+                    target,
+                    fallthrough,
+                }) if target == block || fallthrough == block => Some(id),
+                Some(Terminator::Goto(target)) if target == block => Some(id),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn lookup_symbol(&mut self, block: BlockId, ident: &Ident) -> InstructionId {
+        let references: Vec<InstructionId> = self
+            .predeccessors(block)
+            .iter()
+            .filter_map(|block_id| {
+                let data = self.get_block(*block_id);
+                data.symbol_table.0.get(&ident)
+            })
+            .copied()
+            .collect();
+
+        if references.len() == 1 {
+            *references.first().unwrap()
+        } else if references.len() == 0 {
+            // implicit initialization of undefined variables to zero
+            self.zero_value()
+        } else {
+            assert!(references.len() == 2);
+            let phi = HeaderStatementKind::Phi(references[0], references[1]);
+            self.add_header_statement(block, phi)
+        }
+    }
+
+    // TODO make this return an error if a symbol can't be resolved correctly (for while loops)
+    fn resolve_symbol(&mut self, block: BlockId, ident: Ident) -> InstructionId {
+        let symbol = self.block_data_mut(block).symbol_table.0.get(&ident);
+
+        match symbol {
+            Some(id) => id.to_owned(),
+            None => {
+                let id = self.lookup_symbol(block, &ident);
+                self.block_data_mut(block).symbol_table.0.insert(ident, id);
+                id
+            }
+        }
+    }
+
+    fn get_constant(&mut self, value: i32) -> InstructionId {
+        for instruction in &self.get_block(BlockId(0)).statements {
+            if let InstructionKind::Constant(c) = instruction.kind {
+                if c == value {
+                    return instruction.id;
+                }
+            }
+        }
+
+        let new_instruction = Instruction {
+            kind: InstructionKind::Constant(value),
+            dominating_instruction: None,
+            id: self.issue_instruction_id(),
+        };
+        info!("Issue constant with ID {:?}", new_instruction.id);
+        self.basic_blocks[0]
+            .statements
+            .push(new_instruction.clone());
+        return new_instruction.id;
+    }
+
+    fn new_block(&mut self) -> BlockId {
+        let data = BasicBlockData::new();
+        self.basic_blocks.push(data);
+        BlockId(self.basic_blocks.len() - 1)
+    }
+
+    fn set_terminator(&mut self, block: BlockId, terminator: Terminator) {
         if self.block_data_mut(block).terminator.is_some() {
             panic!();
         }
         self.block_data_mut(block).terminator = Some(terminator);
     }
 
-    fn goto(&mut self, block: BasicBlock, target: BasicBlock) {
+    fn goto(&mut self, block: BlockId, target: BlockId) {
         self.set_terminator(block, Terminator::Goto(target))
     }
 
-    fn iter_blocks(&self) -> impl Iterator<Item = (BasicBlock, BasicBlockData)> {
+    pub fn blocks(&self) -> impl Iterator<Item = (BlockId, BasicBlockData)> {
         self.basic_blocks
             .clone()
             .into_iter()
             .enumerate()
-            .map(move |(id, b)| (BasicBlock(id), b))
-    }
-
-    pub fn blocks(&self) -> impl Iterator<Item = (BasicBlock, BasicBlockData)> {
-        self.basic_blocks
-            .clone()
-            .into_iter()
-            .enumerate()
-            .map(|(id, data)| (BasicBlock(id), data))
+            .map(|(id, data)| (BlockId(id), data))
     }
 }
 
@@ -245,15 +292,11 @@ impl Display for BasicBlockData {
 }
 
 // Expression cannot lower across multiple blocks
-fn lower_expression(
-    cfg: &mut ControlFlowGraph,
-    block: BasicBlock,
-    expr: Expression,
-) -> InstructionId {
+fn lower_expression(cfg: &mut ControlFlowGraph, block: BlockId, expr: Expression) -> InstructionId {
     match expr {
-        Expression::Constant(c) => cfg.add_constant(c),
+        Expression::Constant(c) => cfg.get_constant(c),
         // a lookup of an uninitialized variable returns the ZERO constant
-        Expression::Identifier(ident) => cfg.get_symbol(block, ident).unwrap_or(cfg.zero_value()),
+        Expression::Identifier(ident) => cfg.resolve_symbol(block, ident),
         Expression::Add(l, r) => {
             let add = InstructionKind::BasicOp(
                 BasicOpKind::Add,
@@ -272,10 +315,22 @@ fn lower_expression(
         }
         Expression::Multiply(_, _) => todo!(),
         Expression::Divide(_, _) => todo!(),
+        Expression::Call(call) => {
+            info!("Lowering call: {}", call.function_name.0);
+            if call.function_name.0 == "InputNum" {
+                cfg.add_instruction(block, InstructionKind::Read)
+            } else if call.function_name.0 == "OutputNum" {
+                let arg = call.arguments.first().unwrap();
+                let val = lower_expression(cfg, block, arg.to_owned());
+                cfg.add_instruction(block, InstructionKind::Write(val))
+            } else {
+                todo!()
+            }
+        }
     }
 }
 
-fn lower_relation(cfg: &mut ControlFlowGraph, block: BasicBlock, relation: Relation) -> Comparison {
+fn lower_relation(cfg: &mut ControlFlowGraph, block: BlockId, relation: Relation) -> Comparison {
     // TODO make this a little more intelligent
     match relation.compare_op {
         crate::tokenizer::Token::LessThan => {
@@ -298,11 +353,7 @@ fn lower_relation(cfg: &mut ControlFlowGraph, block: BasicBlock, relation: Relat
     }
 }
 
-fn lower_statement(
-    cfg: &mut ControlFlowGraph,
-    block: BasicBlock,
-    statement: Statement,
-) -> BasicBlock {
+fn lower_statement(cfg: &mut ControlFlowGraph, block: BlockId, statement: Statement) -> BlockId {
     match statement {
         Statement::Assign(Designator::Ident(ident), expr) => {
             let val = lower_expression(cfg, block, expr);
@@ -318,21 +369,22 @@ fn lower_statement(
             debug!("Lowering statement {:?}", statement.clone());
             let header_block = block;
 
+            let target_block = cfg.new_block();
+            let target_block = lower_block(cfg, target_block, body.clone());
+
             let follow_block = cfg.new_block();
 
-            let new_block = cfg.new_block();
-            let main_body_blk = lower_block(cfg, new_block, body.clone());
+            let condition = lower_relation(cfg, header_block, condition.clone());
 
             match else_body {
                 Some(else_body) => {
                     let else_body_blk = cfg.new_block();
 
-                    let condition = lower_relation(cfg, header_block, condition.clone());
                     cfg.set_terminator(
                         header_block,
                         Terminator::ConditionalBranch {
                             condition,
-                            target: main_body_blk,
+                            target: target_block,
                             fallthrough: else_body_blk,
                         },
                     );
@@ -342,46 +394,58 @@ fn lower_statement(
                         "Lowered else_body from block {} to block {}",
                         old_else_body_blk.0, else_body_blk.0
                     );
-                    cfg.goto(else_body_blk, header_block);
+                    cfg.goto(target_block, follow_block);
+                    cfg.goto(else_body_blk, follow_block);
                 }
                 None => {
-                    let condition = lower_relation(cfg, header_block, condition.clone());
                     debug!("Lowered condition to block {}", header_block.0);
                     debug!(
                         "Add edge {} -(target)-> {}, {} -(fallthrough)-> {}",
-                        header_block.0, main_body_blk.0, header_block.0, follow_block.0
+                        header_block.0, target_block.0, header_block.0, follow_block.0
                     );
                     cfg.set_terminator(
                         header_block,
                         Terminator::ConditionalBranch {
                             condition,
-                            target: main_body_blk,
+                            target: target_block,
                             fallthrough: follow_block,
                         },
                     );
 
-                    cfg.goto(main_body_blk, header_block);
+                    cfg.goto(target_block, follow_block);
                 }
             }
             follow_block
         }
         Statement::While { condition, body } => todo!(),
+        Statement::Call(call) => {
+            if call.function_name.0 == "OutputNum" {
+                let arg = call
+                    .arguments
+                    .first()
+                    .expect("A call to OutputNum should have at least one argument");
+                let ins = lower_expression(cfg, block, arg.clone());
+                cfg.add_instruction(block, InstructionKind::Write(ins));
+                block
+            } else {
+                todo!()
+            }
+        }
     }
 }
 
-fn lower_block(cfg: &mut ControlFlowGraph, mut blk: BasicBlock, block: Block) -> BasicBlock {
+fn lower_block(cfg: &mut ControlFlowGraph, mut blk: BlockId, block: Block) -> BlockId {
     for statement in block.0 {
         blk = lower_statement(cfg, blk, statement);
     }
     blk
 }
 
-#[allow(dead_code)]
 pub fn lower_program(forest: ProgramForest) -> ControlFlowGraph {
     let mut cfg = ControlFlowGraph::new();
-    let block = cfg.start_block();
+    let mut block = cfg.start_block();
     for statement in forest.roots {
-        lower_statement(&mut cfg, block, statement);
+        block = lower_statement(&mut cfg, block, statement);
     }
     cfg
 }

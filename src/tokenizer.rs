@@ -11,7 +11,7 @@ pub struct Ident(pub std::string::String);
 #[derive(Debug, PartialEq, Clone)]
 pub enum Token {
     //String(std::string::String),
-    Number(f32),
+    Number(i32),
     Identifier(Ident),
     // arithmetic
     Plus,
@@ -40,7 +40,9 @@ pub enum Token {
     Return,
     Do,
     Od,
+    // structure
     Semicolon,
+    Comma,
 }
 
 impl Token {
@@ -168,8 +170,7 @@ impl Iterator for Tokenizer {
             let res = self.state.accept(curr, next);
             match res {
                 Err(err) => {
-                    error!("{}", err);
-                    panic!();
+                    panic!("Error: {}", err);
                 }
                 Ok(response) => {
                     if response.advance {
@@ -197,7 +198,7 @@ impl State for Waiting {
     fn accept(&mut self, curr: char, next: Option<char>) -> TokenizerResult {
         match curr {
             '0'..='9' => transition(Number::new()),
-            'a'..='z' => transition(Ident::new()),
+            'a'..='z' | 'A'..='Z' => transition(Ident::new()),
             '<' => match next {
                 Some('-') => transition_and_advance(Assign::new()),
                 Some('=') => emit(Token::LessThanEqual),
@@ -216,6 +217,7 @@ impl State for Waiting {
             ')' => emit(Token::RightParen),
             '.' => emit(Token::Period),
             ';' => emit(Token::Semicolon),
+            ',' => emit(Token::Comma),
             c if c.is_whitespace() => pass(),
             _ => Err(TokenizerError {
                 message: format!("Recieved unknown character '{curr}' while in Waiting"),
@@ -274,8 +276,8 @@ impl State for Number {
         if !curr.is_alphanumeric() || next.is_none() || !next.unwrap().is_alphanumeric() {
             let str = self.acc.drain(..).collect::<String>();
             let number = str
-                .parse::<f32>()
-                .unwrap_or_else(|_| panic!("tried to parse '{str}' to f32"));
+                .parse::<i32>()
+                .unwrap_or_else(|_| panic!("tried to parse '{str}' to i32"));
             emit_and_transition(Token::Number(number), Box::new(Waiting {}))
         } else {
             pass()
@@ -314,14 +316,14 @@ mod tests {
         let tokens = SourceFile::new("1+2-(4+5) * a").tokens();
 
         let expected_tokens = vec![
-            Token::Number(1.0),
+            Token::Number(1),
             Token::Plus,
-            Token::Number(2.0),
+            Token::Number(2),
             Token::Minus,
             Token::LeftParen,
-            Token::Number(4.0),
+            Token::Number(4),
             Token::Plus,
-            Token::Number(5.0),
+            Token::Number(5),
             Token::RightParen,
             Token::Star,
             Token::Identifier(Ident("a".to_string())),
