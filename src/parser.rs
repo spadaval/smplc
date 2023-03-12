@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
-use super::tokenizer::{Ident, State, Token, Tokenizer};
-use log::{debug, info};
+use super::tokenizer::{Ident, Token, Tokenizer};
+use log::{info};
 use serde::Serialize;
 
 #[derive(Clone)]
@@ -59,7 +59,7 @@ impl Parser {
     fn advance(&mut self) -> Option<Token> {
         let token_to_return = self.curr.clone();
         self.curr = self.tokens.next();
-        return token_to_return;
+        token_to_return
     }
 }
 #[derive(Debug)]
@@ -83,6 +83,7 @@ pub struct FunctionCall {
     pub arguments: Vec<Expression>,
 }
 
+// note: this enum's discriminant is used as the key for the dominance lookup table
 #[derive(Serialize, Debug, PartialEq, Clone)]
 pub enum Expression {
     Constant(i32),
@@ -148,7 +149,7 @@ impl Parse for LValue {
         match parser.curr.clone() {
             Some(Token::Identifier(ident)) => {
                 parser.advance();
-                return Ok(Designator::Ident(ident.clone()));
+                Ok(Designator::Ident(ident))
             }
             _ => err("Failed while parsing designator"),
         }
@@ -171,11 +172,11 @@ impl Parse for RelationParser {
         }
 
         let right = ExpressionParser::parse(parser).unwrap();
-        return Ok(Relation {
+        Ok(Relation {
             left,
             compare_op,
             right,
-        });
+        })
     }
 }
 
@@ -381,7 +382,7 @@ mod tests {
     use super::*;
     use crate::SourceFile;
     use pretty_assertions::assert_eq;
-    use pretty_env_logger::env_logger;
+    
     use std::rc::Rc;
 
     #[test]
@@ -495,7 +496,7 @@ fi
 
     #[test]
     fn test_multiline() {
-        let _ = pretty_env_logger::init();
+        pretty_env_logger::init();
         let program = r"
             let a <- 0;
             let b <- 10;
@@ -511,7 +512,7 @@ fi
     }
     #[test]
     fn test_parser_functions() {
-        let _ = pretty_env_logger::init();
+        pretty_env_logger::init();
         let program = r"
             let a <- call InputNum();        
             call OutputNum(c);

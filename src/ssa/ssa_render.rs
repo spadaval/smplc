@@ -7,10 +7,16 @@ enum EdgeKind {
     Conditional(String),
     SymbolTable,
 }
+
+enum Direction {
+    Up,
+    Down,
+}
 struct Edge {
     start: String,
     end: String,
     kind: EdgeKind,
+    direction: Direction,
 }
 impl Edge {
     fn bb(start: usize, end: usize, kind: EdgeKind) -> Self {
@@ -18,10 +24,20 @@ impl Edge {
             start: format!("bb{start}"),
             end: format!("bb{end}"),
             kind,
+            direction: if end > start {
+                Direction::Down
+            } else {
+                Direction::Up
+            },
         }
     }
     fn new(start: String, end: String, kind: EdgeKind) -> Self {
-        Edge { start, end, kind }
+        Edge {
+            start,
+            end,
+            kind,
+            direction: Direction::Down,
+        }
     }
 }
 pub struct Graph {
@@ -42,7 +58,7 @@ impl Graph {
                         edges.push(Edge::bb(block.0, target.0, EdgeKind::Goto))
                     }
                     ssa::Terminator::ConditionalBranch {
-                        condition,
+                        condition: _,
                         target,
                         fallthrough,
                     } => {
@@ -80,18 +96,34 @@ impl Graph {
         }
 
         //bb1:b -> bb2:b [color=blue, style=dotted, label="dom"]
-        for Edge { start, end, kind } in &self.edges {
+        for Edge {
+            start,
+            end,
+            kind,
+            direction,
+        } in &self.edges
+        {
             match kind {
-                EdgeKind::Goto => {
-                    writeln!(dot, "{}:s -> {}:n [label=\"goto\" ]", start, end).unwrap()
-                }
-                EdgeKind::Conditional(s) => {
-                    writeln!(dot, "{}:s -> {}:n [label=\"{}\" ]", start, end, s).unwrap()
-                }
+                EdgeKind::Goto => match direction {
+                    Direction::Up => {
+                        writeln!(dot, "{start}:s -> {end}:e [label=\"goto\" ]").unwrap()
+                    }
+                    Direction::Down => {
+                        writeln!(dot, "{start}:s -> {end}:n [label=\"goto\" ]").unwrap()
+                    }
+                },
+
+                EdgeKind::Conditional(s) => match direction {
+                    Direction::Up => {
+                        writeln!(dot, "{start}:s -> {end}:e [label=\"{s}\" ]").unwrap()
+                    }
+                    Direction::Down => {
+                        writeln!(dot, "{start}:s -> {end}:n [label=\"{s}\" ]").unwrap()
+                    }
+                },
                 EdgeKind::SymbolTable => writeln!(
                     dot,
-                    "{}:s -> {}:w [label=\"{}\", color=blue, fontcolor=blue]",
-                    start, end, "symbols"
+                    "{start}:s -> {end}:w [label=\"symbols\", color=blue, fontcolor=blue]"
                 )
                 .unwrap(),
             };
@@ -112,16 +144,8 @@ struct Block {
 
 impl Block {
     fn new(block: &ssa::BlockId, block_data: &ssa::BasicBlockData) -> Self {
-        let header = block_data
-            .header
-            .iter()
-            .map(|it| Instruction::from(it))
-            .collect();
-        let instructions = block_data
-            .statements
-            .iter()
-            .map(|it| Instruction::new(it))
-            .collect();
+        let header = block_data.header.iter().map(Instruction::from).collect();
+        let instructions = block_data.statements.iter().map(Instruction::new).collect();
 
         let mut symbols = HashMap::new();
         for (ident, id) in block_data.symbol_table.0.clone() {
@@ -151,12 +175,12 @@ impl Block {
 
         write!(label, "}}")?;
 
-        writeln!(str, "[shape=record, label=\"{}\"];", label)
+        writeln!(str, "[shape=record, label=\"{label}\"];")
     }
 
     fn write_symbols(&self, str: &mut String) -> Result<Option<Edge>, std::fmt::Error> {
         write!(str, "sym{} ", self.id)?;
-        let mut label = format!("<b>SYM{} | ", self.id);
+        let mut label = "".to_string(); //format!("<b>SYM{} | ", self.id);
         write!(label, "{{")?;
 
         let ins = self
@@ -170,7 +194,7 @@ impl Block {
 
         write!(label, "}}")?;
 
-        writeln!(str, "[shape=record, color=blue, label=\"{}\"];", label)?;
+        writeln!(str, "[shape=record, color=blue, label=\"{label}\"];")?;
         Ok(Some(Edge::new(
             format!("sym{0}", self.id),
             format!("bb{0}", self.id),
@@ -208,7 +232,7 @@ impl Instruction {
                 op: "Const".to_string(),
                 operands: vec![Operand::Constant(c)],
             },
-            ssa::InstructionKind::BasicOp(op, l, r) => Instruction {
+            ssa::InstructionKind::BasicOp(_op, l, r) => Instruction {
                 id: instruction.id.0,
                 op: instruction.kind.clone().into(),
                 operands: vec![
@@ -235,21 +259,23 @@ impl Instruction {
         write!(s, "{}: {}", self.id, self.op).unwrap();
         for op in &self.operands {
             match op {
-                Operand::InstructionReference(ins) => write!(s, " ({})", ins).unwrap(),
-                Operand::Constant(c) => write!(s, " #{}", c).unwrap(),
+                Operand::InstructionReference(ins) => write!(s, " ({ins})").unwrap(),
+                Operand::Constant(c) => write!(s, " #{c}").unwrap(),
             };
         }
         s
     }
 }
 
-impl Into<String> for InstructionKind {
-    fn into(self) -> String {
-        match self {
+impl From<InstructionKind> for String {
+    fn from(val: InstructionKind) -> Self {
+        match val {
             InstructionKind::Constant(_) => "Const".to_string(),
             InstructionKind::BasicOp(op, _, _) => match op {
                 ssa::BasicOpKind::Add => "add".to_string(),
                 ssa::BasicOpKind::Subtract => "sub".to_string(),
+                ssa::BasicOpKind::Multiply => "mul".to_string(),
+                ssa::BasicOpKind::Divide => "div".to_string(),
             },
             InstructionKind::Read => "read".to_string(),
             InstructionKind::Write(_) => "write".to_string(),
@@ -278,10 +304,8 @@ impl From<&ssa::HeaderInstruction> for Instruction {
 }
 
 impl From<ssa::Terminator> for Instruction {
-    fn from(instruction: ssa::Terminator) -> Self {
-        match instruction {
-            _ => todo!(),
-        }
+    fn from(_instruction: ssa::Terminator) -> Self {
+        todo!()
     }
 }
 
@@ -292,10 +316,10 @@ mod tests {
 
     #[test]
     fn test_if_dot() {
-        let _ = pretty_env_logger::init();
+        pretty_env_logger::init();
 
         let program = r"
-            let a <- 4;
+            let a <- call InputNum();
             let b <- 10;
             let b <- b+a;
             if a < b
@@ -316,8 +340,34 @@ mod tests {
     }
 
     #[test]
+    fn test_dot_while() {
+        pretty_env_logger::init();
+
+        let program = r"
+            let n <- call InputNum();
+            let a <- 0;
+            let b <- 1;
+            let i <- 0;
+            while i < n
+            do 
+                let sum <- a + b;
+                let a <- b;
+                let b <- sum;             
+            od
+            
+            call OutputNum(b);
+
+        ";
+        let forest = parse(crate::SourceFile::new(program));
+        //println!("{forest:#?}");
+        let cfg = lower_program(forest);
+        let mut g = Graph::new(cfg);
+        println!("{}", g.render());
+    }
+
+    #[test]
     fn test_io_fn_dot() {
-        let _ = pretty_env_logger::init();
+        pretty_env_logger::init();
 
         let program = r"
             let a <- call InputNum();
@@ -325,6 +375,29 @@ mod tests {
             let b <- 10;
             let c <- b+a;
             let c <- a + 1
+            call OutputNum(c);
+        ";
+        let forest = parse(crate::SourceFile::new(program));
+        //println!("{forest:#?}");
+        let cfg = lower_program(forest);
+        let mut g = Graph::new(cfg);
+        println!("{}", g.render());
+    }
+
+    #[test]
+    fn test_dot_cse() {
+        pretty_env_logger::init();
+
+        let program = r"
+            let a <- call InputNum();
+            let b <- 3;
+            let c <- 6; 
+            let b <- a+ b *c - 4 + 7;
+            let c <- a+ b *c - 4 + 7;
+            let d <- a+ b *c - 4 + 7;
+            let e <- a+ b *c - 4 + 7;
+            let f <- a+ b *c - 4 + 7;
+            let g <- a+ b *c - 4 + 7;
             call OutputNum(c);
         ";
         let forest = parse(crate::SourceFile::new(program));

@@ -3,7 +3,7 @@ use std::{
     rc::Rc,
 };
 
-use log::{debug, error, info};
+use log::{debug, info};
 use serde::{Deserialize, Serialize};
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize, Eq, Hash)]
 pub struct Ident(pub std::string::String);
@@ -170,7 +170,7 @@ impl Iterator for Tokenizer {
             let res = self.state.accept(curr, next);
             match res {
                 Err(err) => {
-                    panic!("Error: {}", err);
+                    panic!("Error: {err}");
                 }
                 Ok(response) => {
                     if response.advance {
@@ -309,7 +309,7 @@ mod tests {
     use super::*;
     use crate::SourceFile;
     use pretty_assertions::assert_eq;
-    use std::{iter::zip, rc::Rc};
+    use std::{iter::zip};
 
     #[test]
     fn test_tokenize_expression() {
