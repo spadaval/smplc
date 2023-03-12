@@ -1,14 +1,13 @@
 use std::{
     collections::HashMap,
-    fmt::Display,
     mem::{self, Discriminant},
 };
 
-use log::{debug, info};
+
 
 //TODO remove a bunch of the `pub` declarations and provide controlled access methods instead
 use crate::{
-    parser::{Block, Designator, Expression, ProgramForest, Relation, Statement},
+    parser::{Expression},
     tokenizer::Ident,
 };
 
@@ -91,7 +90,7 @@ impl DominanceTable {
     }
 
     pub fn new() -> Self {
-        return DominanceTable { expressions: Default::default() };
+        DominanceTable { expressions: Default::default() }
     }
 }
 

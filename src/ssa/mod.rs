@@ -7,7 +7,7 @@ use ssa::lower_block;
 
 pub fn lower_program(forest: ProgramForest) -> ControlFlowGraph {
     let mut cfg = ControlFlowGraph::new();
-    let mut block = cfg.start_block();
+    let block = cfg.start_block();
     lower_block(&mut cfg, block, &forest.roots[0]);
     cfg
 }

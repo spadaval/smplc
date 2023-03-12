@@ -26,7 +26,7 @@ fn lower_expression(cfg: &mut ControlFlowGraph, block: BlockId, expr: &Expressio
     match existing_expression {
         Some(id) => id,
         None => {
-            let id = do_lower_expression(cfg, block, &expr);
+            let id = do_lower_expression(cfg, block, expr);
             cfg.save_expression(block, expr, id);
             id
         }
@@ -106,7 +106,7 @@ fn lower_statement(cfg: &mut ControlFlowGraph, block: BlockId, statement: Statem
             let condition = lower_relation(cfg, header_block, condition.clone());
 
             let main_body = cfg.new_block(header_block);
-            let main_body_end = lower_block(cfg, main_body, &body);
+            let main_body_end = lower_block(cfg, main_body, body);
 
             let follow_block = cfg.new_block(header_block);
 
@@ -122,7 +122,7 @@ fn lower_statement(cfg: &mut ControlFlowGraph, block: BlockId, statement: Statem
                             fallthrough: else_body_start,
                         },
                     );
-                    let else_body_end = lower_block(cfg, else_body_start, &else_body);
+                    let else_body_end = lower_block(cfg, else_body_start, else_body);
                     debug!("Lowered else_body from block {} to block {}", else_body_start.0, else_body_end.0);
                     cfg.goto(main_body_end, follow_block);
                     cfg.goto(else_body_end, follow_block);
@@ -148,7 +148,7 @@ fn lower_statement(cfg: &mut ControlFlowGraph, block: BlockId, statement: Statem
             debug!("Lowering while statement ");
 
             let header_block = block;
-            let condition = lower_relation(cfg, header_block, condition.clone());
+            let condition = lower_relation(cfg, header_block, condition);
 
             let main_body = cfg.new_block(header_block);
             let main_body_end = lower_block(cfg, main_body, &body);
@@ -172,7 +172,7 @@ fn lower_statement(cfg: &mut ControlFlowGraph, block: BlockId, statement: Statem
         Statement::Call(call) => {
             if call.function_name.0 == "OutputNum" {
                 let arg = call.arguments.first().expect("A call to OutputNum should have at least one argument");
-                let ins = lower_expression(cfg, block, &arg);
+                let ins = lower_expression(cfg, block, arg);
                 cfg.add_instruction(block, InstructionKind::Write(ins));
                 block
             } else {
