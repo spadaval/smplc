@@ -128,7 +128,7 @@ pub enum Statement {
 
 #[derive(Debug)]
 pub struct ProgramForest {
-    pub roots: Vec<Statement>,
+    pub roots: Vec<Block>,
 }
 
 pub trait Parse {
@@ -370,11 +370,11 @@ impl Parse for FactorParser {
 // TODO handle functions and all the other crap
 pub fn parse(mut program: SourceFile) -> ProgramForest {
     let mut parser = Parser::new(program.tokens());
-    let mut statements = Vec::new();
-    while let Ok(statement) = StatementParser::parse(&mut parser) {
-        statements.push(statement);
+    let mut blocks = Vec::new();
+    while let Ok(block) = BlockParser::parse(&mut parser) {
+        blocks.push(block);
     }
-    ProgramForest { roots: statements }
+    ProgramForest { roots: blocks }
 }
 
 #[cfg(test)]

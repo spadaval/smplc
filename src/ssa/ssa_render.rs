@@ -1,11 +1,15 @@
 use std::{collections::HashMap, fmt::Write};
 
-use super::ssa::{self, BasicBlockData, BlockId, ControlFlowGraph, InstructionId, InstructionKind};
+use super::types::ComparisonKind;
+
+use super::cfg::ControlFlowGraph;
+use super::types::{BasicBlockData, BlockId, Comparison, InstructionId, InstructionKind, Terminator};
 
 enum EdgeKind {
     Goto,
     Conditional(String),
     SymbolTable,
+    Dominance,
 }
 
 enum Direction {
@@ -18,32 +22,45 @@ struct Edge {
     kind: EdgeKind,
     direction: Direction,
 }
+
+impl Comparison {
+    fn to_string(&self) -> String {
+        let comp = match self.kind {
+            ComparisonKind::LtZero => "<",
+            ComparisonKind::LteZero => "<=",
+            ComparisonKind::GtZero => ">",
+            ComparisonKind::GteZero => ">=",
+            ComparisonKind::EqZero => "=",
+            ComparisonKind::NeZero => "!=",
+        };
+        format!("({}) {} 0", self.value.0, comp)
+    }
+}
+
 impl Edge {
-    fn bb(start: usize, end: usize, kind: EdgeKind) -> Self {
+    fn bb(start: BlockId, end: BlockId, kind: EdgeKind) -> Self {
         Edge {
-            start: format!("bb{start}"),
-            end: format!("bb{end}"),
+            start: format!("bb{}", start.0),
+            end: format!("bb{}", end.0),
             kind,
-            direction: if end > start {
-                Direction::Down
-            } else {
-                Direction::Up
-            },
+            direction: if end.0 > start.0 { Direction::Down } else { Direction::Up },
         }
     }
     fn new(start: String, end: String, kind: EdgeKind) -> Self {
+        Edge { start, end, kind, direction: Direction::Down }
+    }
+
+    fn dominance(start: BlockId, end: BlockId) -> Edge {
         Edge {
-            start,
-            end,
-            kind,
-            direction: Direction::Down,
+            start: format!("bb{}", start.0),
+            end: format!("bb{}", end.0),
+            kind: EdgeKind::Dominance,
+            direction: Direction::Up,
         }
     }
 }
 pub struct Graph {
     blocks: Vec<Block>,
-    // source, target, label (optional)
-    // yes, I know this is bad . Shut up.
     edges: Vec<Edge>,
 }
 
@@ -52,36 +69,23 @@ impl Graph {
         let blocks = cfg.blocks().collect::<Vec<(BlockId, BasicBlockData)>>();
         let mut edges = Vec::new();
         for (block, block_data) in &blocks {
+            if let Some(x) = block_data.dominating_block {
+                edges.push(Edge::dominance(*block, x));
+            };
+
             if let Some(x) = &block_data.terminator {
                 match x {
-                    ssa::Terminator::Goto(target) => {
-                        edges.push(Edge::bb(block.0, target.0, EdgeKind::Goto))
-                    }
-                    ssa::Terminator::ConditionalBranch {
-                        condition: _,
-                        target,
-                        fallthrough,
-                    } => {
+                    Terminator::Goto(target) => edges.push(Edge::bb(*block, *target, EdgeKind::Goto)),
+                    Terminator::ConditionalBranch { condition, target, fallthrough } => {
                         // TODO include condition details in graph
-                        edges.push(Edge::bb(
-                            block.0,
-                            target.0,
-                            EdgeKind::Conditional("true".to_string()),
-                        ));
-                        edges.push(Edge::bb(
-                            block.0,
-                            fallthrough.0,
-                            EdgeKind::Conditional("false".to_string()),
-                        ));
+                        edges.push(Edge::bb(*block, *target, EdgeKind::Conditional(condition.to_string())));
+                        edges.push(Edge::bb(*block, *fallthrough, EdgeKind::Conditional("false".to_string())));
                     }
                 }
             }
         }
 
-        let blocks = blocks
-            .iter()
-            .map(|(id, bb_data)| Block::new(id, bb_data))
-            .collect();
+        let blocks = blocks.iter().map(|(id, bb_data)| Block::new(id, bb_data)).collect();
         Graph { blocks, edges }
     }
 
@@ -96,36 +100,19 @@ impl Graph {
         }
 
         //bb1:b -> bb2:b [color=blue, style=dotted, label="dom"]
-        for Edge {
-            start,
-            end,
-            kind,
-            direction,
-        } in &self.edges
-        {
+        for Edge { start, end, kind, direction } in &self.edges {
             match kind {
                 EdgeKind::Goto => match direction {
-                    Direction::Up => {
-                        writeln!(dot, "{start}:s -> {end}:e [label=\"goto\" ]").unwrap()
-                    }
-                    Direction::Down => {
-                        writeln!(dot, "{start}:s -> {end}:n [label=\"goto\" ]").unwrap()
-                    }
+                    Direction::Up => writeln!(dot, "{start}:s -> {end}:e [label=\"goto\" ]").unwrap(),
+                    Direction::Down => writeln!(dot, "{start}:s -> {end}:n [label=\"goto\" ]").unwrap(),
                 },
 
                 EdgeKind::Conditional(s) => match direction {
-                    Direction::Up => {
-                        writeln!(dot, "{start}:s -> {end}:e [label=\"{s}\" ]").unwrap()
-                    }
-                    Direction::Down => {
-                        writeln!(dot, "{start}:s -> {end}:n [label=\"{s}\" ]").unwrap()
-                    }
+                    Direction::Up => writeln!(dot, "{start}:s -> {end}:e [label=\"{s}\" ]").unwrap(),
+                    Direction::Down => writeln!(dot, "{start}:s -> {end}:n [label=\"{s}\" ]").unwrap(),
                 },
-                EdgeKind::SymbolTable => writeln!(
-                    dot,
-                    "{start}:s -> {end}:w [label=\"symbols\", color=blue, fontcolor=blue]"
-                )
-                .unwrap(),
+                EdgeKind::SymbolTable => writeln!(dot, "{start}:s -> {end}:w [label=\"symbols\", color=blue, arrowsize=0.6, fontcolor=blue, fontsize=8, style=dotted, arrowhead=vee]").unwrap(),
+                EdgeKind::Dominance => writeln!(dot, "{start}:ne -> {end}:s [label=\"dom\", color=red, arrowsize=0.6, fontcolor=red, fontsize=8, style=dotted, arrowhead=vee]").unwrap(),
             };
         }
 
@@ -143,7 +130,7 @@ struct Block {
 }
 
 impl Block {
-    fn new(block: &ssa::BlockId, block_data: &ssa::BasicBlockData) -> Self {
+    fn new(block: &BlockId, block_data: &BasicBlockData) -> Self {
         let header = block_data.header.iter().map(Instruction::from).collect();
         let instructions = block_data.statements.iter().map(Instruction::new).collect();
 
@@ -154,12 +141,7 @@ impl Block {
 
         //let terminator: Instruction = block_data.terminator.into();
 
-        Block {
-            id: block.0,
-            header,
-            instructions,
-            symbols,
-        }
+        Block { id: block.0, header, instructions, symbols }
     }
 
     fn write_record(&self, str: &mut String) -> Result<(), std::fmt::Error> {
@@ -183,23 +165,14 @@ impl Block {
         let mut label = "".to_string(); //format!("<b>SYM{} | ", self.id);
         write!(label, "{{")?;
 
-        let ins = self
-            .symbols
-            .iter()
-            .map(|(symbol, id)| format!("{symbol}: {id}"))
-            .collect::<Vec<String>>()
-            .join(" | ");
+        let ins = self.symbols.iter().map(|(symbol, id)| format!("{symbol}: {id}")).collect::<Vec<String>>().join(" | ");
 
         write!(label, "{ins}")?;
 
         write!(label, "}}")?;
 
-        writeln!(str, "[shape=record, color=blue, label=\"{label}\"];")?;
-        Ok(Some(Edge::new(
-            format!("sym{0}", self.id),
-            format!("bb{0}", self.id),
-            EdgeKind::SymbolTable,
-        )))
+        writeln!(str, "[shape=record, fontsize=8, width=0.1, color=blue, label=\"{label}\"];")?;
+        Ok(Some(Edge::new(format!("sym{0}", self.id), format!("bb{0}", self.id), EdgeKind::SymbolTable)))
     }
 }
 
@@ -225,20 +198,17 @@ struct Instruction {
 }
 
 impl Instruction {
-    fn new(instruction: &ssa::Instruction) -> Self {
+    fn new(instruction: &super::types::Instruction) -> Self {
         match instruction.kind.clone() {
-            ssa::InstructionKind::Constant(c) => Instruction {
+            super::types::InstructionKind::Constant(c) => Instruction {
                 id: instruction.id.0,
                 op: "Const".to_string(),
                 operands: vec![Operand::Constant(c)],
             },
-            ssa::InstructionKind::BasicOp(_op, l, r) => Instruction {
+            super::types::InstructionKind::BasicOp(_op, l, r) => Instruction {
                 id: instruction.id.0,
                 op: instruction.kind.clone().into(),
-                operands: vec![
-                    Operand::InstructionReference(l.0),
-                    Operand::InstructionReference(r.0),
-                ],
+                operands: vec![Operand::InstructionReference(l.0), Operand::InstructionReference(r.0)],
             },
             InstructionKind::Read => Instruction {
                 id: instruction.id.0,
@@ -272,10 +242,10 @@ impl From<InstructionKind> for String {
         match val {
             InstructionKind::Constant(_) => "Const".to_string(),
             InstructionKind::BasicOp(op, _, _) => match op {
-                ssa::BasicOpKind::Add => "add".to_string(),
-                ssa::BasicOpKind::Subtract => "sub".to_string(),
-                ssa::BasicOpKind::Multiply => "mul".to_string(),
-                ssa::BasicOpKind::Divide => "div".to_string(),
+                super::types::BasicOpKind::Add => "add".to_string(),
+                super::types::BasicOpKind::Subtract => "sub".to_string(),
+                super::types::BasicOpKind::Multiply => "mul".to_string(),
+                super::types::BasicOpKind::Divide => "div".to_string(),
             },
             InstructionKind::Read => "read".to_string(),
             InstructionKind::Write(_) => "write".to_string(),
@@ -283,36 +253,34 @@ impl From<InstructionKind> for String {
     }
 }
 
-impl From<&ssa::HeaderInstruction> for Instruction {
-    fn from(instruction: &ssa::HeaderInstruction) -> Self {
+impl From<&super::types::HeaderInstruction> for Instruction {
+    fn from(instruction: &super::types::HeaderInstruction) -> Self {
         match instruction.kind {
-            ssa::HeaderStatementKind::Kill(ins) => Instruction {
+            super::types::HeaderStatementKind::Kill(ins) => Instruction {
                 id: instruction.id.0,
                 op: "kill".to_string(),
                 operands: vec![Operand::InstructionReference(ins.0)],
             },
-            ssa::HeaderStatementKind::Phi(l, r) => Instruction {
+            super::types::HeaderStatementKind::Phi(l, r) => Instruction {
                 id: instruction.id.0,
                 op: "phi".to_string(),
-                operands: vec![
-                    Operand::InstructionReference(l.0),
-                    Operand::InstructionReference(r.0),
-                ],
+                operands: vec![Operand::InstructionReference(l.0), Operand::InstructionReference(r.0)],
             },
         }
     }
 }
 
-impl From<ssa::Terminator> for Instruction {
-    fn from(_instruction: ssa::Terminator) -> Self {
+impl From<super::types::Terminator> for Instruction {
+    fn from(_instruction: super::types::Terminator) -> Self {
         todo!()
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::{lower_program, parse};
+
     use super::*;
-    use crate::{parse, ssa::ssa::lower_program};
 
     #[test]
     fn test_if_dot() {
@@ -350,13 +318,13 @@ mod tests {
             let i <- 0;
             while i < n
             do 
+                let i <- i + 1
                 let sum <- a + b;
                 let a <- b;
-                let b <- sum;             
+                let b <- sum;
             od
             
             call OutputNum(b);
-
         ";
         let forest = parse(crate::SourceFile::new(program));
         //println!("{forest:#?}");
