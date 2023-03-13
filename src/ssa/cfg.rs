@@ -1,8 +1,8 @@
-use std::collections::{HashMap, HashSet};
 
-use log::{error, info, warn};
 
-use crate::{parser::Expression, ssa::replacer::Replacer, tokenizer::Ident};
+use log::{warn};
+
+use crate::{parser::Expression, tokenizer::Ident};
 
 use super::types::*;
 

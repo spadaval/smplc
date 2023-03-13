@@ -3,11 +3,11 @@ use std::{
     mem::{self, Discriminant},
 };
 
-use log::info;
+
 
 //TODO remove a bunch of the `pub` declarations and provide controlled access methods instead
 use crate::{
-    parser::{Expression, Statement},
+    parser::{Expression},
     tokenizer::Ident,
 };
 
@@ -98,6 +98,10 @@ impl SymbolTable {
 
     pub(crate) fn set(&mut self, ident: Ident, id: InstructionId) -> Option<InstructionId> {
         self.0.insert(ident, id)
+    }
+
+    pub(crate) fn get_symbol(&self, instruction_id: InstructionId) -> Option<Ident> {
+        self.0.iter().filter_map(|(ident, id)| if *id==instruction_id {Some(ident.clone())} else {None}).next()
     }
 }
 
@@ -207,7 +211,7 @@ impl BasicBlockData {
     }
 
     pub(crate) fn update_phi(&mut self, instruction_id: InstructionId, new_target: InstructionId) {
-        let mut ins = self
+        let ins = self
             .header
             .iter_mut()
             .find(|it| it.id == instruction_id)
@@ -216,6 +220,10 @@ impl BasicBlockData {
             HeaderStatementKind::Kill(_) => panic!(),
             HeaderStatementKind::Phi(_, ref mut new) => *new = new_target,
         }
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.header.is_empty() && self.statements.is_empty()
     }
 }
 

@@ -1,14 +1,12 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap},
     fmt::Display,
-    ops::ControlFlow,
 };
 
-use log::{debug, error, info, warn};
+use log::{debug, info, warn};
 
 use crate::{
     parser::{Block, Designator, Expression, Relation, Statement},
-    tokenizer::Ident,
 };
 
 use super::{cfg::ControlFlowGraph, types::*};
@@ -237,6 +235,7 @@ fn lower_while(
     body: Block,
 ) -> BlockId {
     debug!("Lowering while statement ");
+    //let header_block = if cfg.get_block(root_block).is_empty() {root_block} else {cfg.new_block(root_block)};
     let header_block = cfg.new_block(root_block);
     cfg.goto(root_block, header_block);
     // TODO extract this into a func that returns a Result
@@ -244,7 +243,7 @@ fn lower_while(
     let mut i = 0;
     loop {
         if i == 2 {
-            panic!();
+            panic!("While lowering was attempted too many times");
         }
         i += 1;
 
@@ -257,14 +256,10 @@ fn lower_while(
 
 
         if invalid_mutations.is_empty() {
-
+            // fix any previously generated phi statements
             for mutation in valid_mutations {
-                match created_phis.get(&mutation.ident) {
-                    Some(instruction_id) => {
-                        cfg.block_data_mut(header_block).update_phi(*instruction_id, mutation.new);
-
-                    },
-                    None => {},
+                if let Some(instruction_id) = created_phis.get(&mutation.ident) {
+                    cfg.block_data_mut(header_block).update_phi(*instruction_id, mutation.new);
                 }
             }
 
