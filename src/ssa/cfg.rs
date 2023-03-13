@@ -1,6 +1,8 @@
-use log::info;
+use std::collections::{HashMap, HashSet};
 
-use crate::{parser::Expression, tokenizer::Ident};
+use log::{error, info, warn};
+
+use crate::{parser::Expression, ssa::replacer::Replacer, tokenizer::Ident};
 
 use super::types::*;
 
@@ -12,7 +14,10 @@ pub struct ControlFlowGraph {
 
 impl ControlFlowGraph {
     pub fn new() -> Self {
-        let mut cfg = ControlFlowGraph { basic_blocks: Vec::new(), instruction_count: 0 };
+        let mut cfg = ControlFlowGraph {
+            basic_blocks: Vec::new(),
+            instruction_count: 0,
+        };
         let const_block_id = cfg.new_start_block();
         cfg.get_constant(0);
 
@@ -28,8 +33,12 @@ impl ControlFlowGraph {
         BlockId(1)
     }
 
-    fn get_block(&self, block_id: BlockId) -> &BasicBlockData {
+    pub(crate) fn get_block(&self, block_id: BlockId) -> &BasicBlockData {
         &self.basic_blocks[block_id.0]
+    }
+
+    pub fn get_symbols(&self, block: BlockId) -> &SymbolTable {
+        return &self.get_block(block).symbol_table;
     }
 
     // fn add_block(&mut self, block: BasicBlockData) -> BlockId {
@@ -52,11 +61,16 @@ impl ControlFlowGraph {
         new_id
     }
 
-    fn block_data_mut(&mut self, blk: BlockId) -> &mut BasicBlockData {
+    //FIXME make this private
+    pub(crate) fn block_data_mut(&mut self, blk: BlockId) -> &mut BasicBlockData {
         &mut self.basic_blocks[blk.0]
     }
 
-    pub fn add_instruction(&mut self, block: BlockId, instruction: InstructionKind) -> InstructionId {
+    pub fn add_instruction(
+        &mut self,
+        block: BlockId,
+        instruction: InstructionKind,
+    ) -> InstructionId {
         let new_id = self.issue_instruction_id();
         let data = self.block_data_mut(block);
         let instruction = Instruction {
@@ -69,10 +83,17 @@ impl ControlFlowGraph {
         new_id
     }
 
-    fn add_header_statement(&mut self, block: BlockId, instruction: HeaderStatementKind) -> InstructionId {
+    pub fn add_header_statement(
+        &mut self,
+        block: BlockId,
+        instruction: HeaderStatementKind,
+    ) -> InstructionId {
         let new_id = self.issue_instruction_id();
         let data = self.block_data_mut(block);
-        let instruction = HeaderInstruction { kind: instruction, id: new_id };
+        let instruction = HeaderInstruction {
+            kind: instruction,
+            id: new_id,
+        };
 
         data.header.push(instruction);
         new_id
@@ -82,35 +103,48 @@ impl ControlFlowGraph {
     fn predeccessors(&self, block: BlockId) -> Vec<BlockId> {
         self.blocks()
             .filter_map(|(id, data)| match data.terminator {
-                Some(Terminator::ConditionalBranch { condition: _, target, fallthrough }) if target == block || fallthrough == block => Some(id),
+                Some(Terminator::ConditionalBranch {
+                    condition: _,
+                    target,
+                    fallthrough,
+                }) if target == block || fallthrough == block => Some(id),
                 Some(Terminator::Goto(target)) if target == block => Some(id),
                 _ => None,
             })
             .collect()
     }
 
+    // Semantics: If the symbol exists in the symbol table, that's what we use.
+    // otherwise, we Phi all the references in incoming blocks.
+    // If no reference exists in one or more blocks, they are initialized to zero_value.
+    // If all parents don't define the variable, we simply return the zero_value.
     // this only looks one-level above, so dominance shouldn't be a problem
     fn lookup_symbol(&mut self, block: BlockId, ident: &Ident) -> InstructionId {
-        let references: Vec<InstructionId> = self
+        let current_block = self.get_block(block);
+        if let Some(x) = current_block.symbol_table.0.get(ident) {
+            return *x;
+        }
+
+        let references: Vec<(BlockId, Option<InstructionId>)> = self
             .predeccessors(block)
             .iter()
-            .filter_map(|block_id| {
+            .map(|block_id| {
                 let data = self.get_block(*block_id);
-                data.symbol_table.0.get(ident)
+                (*block_id, data.symbol_table.0.get(ident).copied())
             })
-            .copied()
             .collect();
 
-        if references.len() == 1 {
-            *references.first().unwrap()
-        } else if references.is_empty() {
-            // implicit initialization of undefined variables to zero
-            self.zero_value()
-        } else {
-            assert!(references.len() == 2);
-            let phi = HeaderStatementKind::Phi(references[0], references[1]);
-            self.add_header_statement(block, phi)
+        if references.iter().all(|it| it.1.is_none()) {
+            return self.zero_value();
         }
+
+        assert!(references.len() == 2);
+
+        let phi = HeaderStatementKind::Phi(
+            references[0].1.unwrap_or(self.zero_value()),
+            references[1].1.unwrap_or(self.zero_value()),
+        );
+        self.add_header_statement(block, phi)
     }
 
     // TODO make this return an error if a symbol can't be resolved correctly (for while loops)
@@ -141,8 +175,9 @@ impl ControlFlowGraph {
             dominating_instruction: None,
             id: self.issue_instruction_id(),
         };
-        info!("Issue constant with ID {:?}", new_instruction.id);
-        self.basic_blocks[0].statements.push(new_instruction.clone());
+        self.basic_blocks[0]
+            .statements
+            .push(new_instruction.clone());
         new_instruction.id
     }
 
@@ -176,7 +211,11 @@ impl ControlFlowGraph {
     }
 
     pub fn blocks(&self) -> impl Iterator<Item = (BlockId, BasicBlockData)> {
-        self.basic_blocks.clone().into_iter().enumerate().map(|(id, data)| (BlockId(id), data))
+        self.basic_blocks
+            .clone()
+            .into_iter()
+            .enumerate()
+            .map(|(id, data)| (BlockId(id), data))
     }
 
     pub fn lookup_expression(&self, block: BlockId, expr: &Expression) -> Option<InstructionId> {
@@ -184,6 +223,32 @@ impl ControlFlowGraph {
     }
 
     pub fn save_expression(&mut self, block: BlockId, expr: &Expression, id: InstructionId) {
-        self.block_data_mut(block).dominance_table.add_expression(expr, id);
+        self.block_data_mut(block)
+            .dominance_table
+            .add_expression(expr, id);
+    }
+
+    pub(crate) fn set_symbol(&mut self, block: BlockId, ident: Ident, id: InstructionId) {
+        self.block_data_mut(block).symbol_table.set(ident, id);
+    }
+
+    pub(crate) fn delete(&mut self, start: BlockId) {
+        warn!(
+            "Deleting blocks {:?} -> {:?}",
+            start,
+            self.basic_blocks.len()
+        );
+        self.basic_blocks.drain(start.0..self.basic_blocks.len());
+    }
+
+    pub(crate) fn get_phi_instructions(&self, header_block: BlockId) -> Vec<InstructionId> {
+        self.get_block(header_block)
+            .header
+            .iter()
+            .filter_map(|header_instruction| match header_instruction.kind {
+                HeaderStatementKind::Kill(_) => None,
+                HeaderStatementKind::Phi(_, _) => Some(header_instruction.id),
+            })
+            .collect()
     }
 }

@@ -47,7 +47,12 @@ impl Edge {
         }
     }
     fn new(start: String, end: String, kind: EdgeKind) -> Self {
-        Edge { start, end, kind, direction: Direction::Down }
+        Edge {
+            start,
+            end,
+            kind,
+            direction: Direction::Down,
+        }
     }
 
     fn dominance(start: BlockId, end: BlockId) -> Edge {
@@ -111,8 +116,16 @@ impl Graph {
                     Direction::Up => writeln!(dot, "{start}:s -> {end}:e [label=\"{s}\" ]").unwrap(),
                     Direction::Down => writeln!(dot, "{start}:s -> {end}:n [label=\"{s}\" ]").unwrap(),
                 },
-                EdgeKind::SymbolTable => writeln!(dot, "{start}:s -> {end}:w [label=\"symbols\", color=blue, arrowsize=0.6, fontcolor=blue, fontsize=8, style=dotted, arrowhead=vee]").unwrap(),
-                EdgeKind::Dominance => writeln!(dot, "{start}:ne -> {end}:s [label=\"dom\", color=red, arrowsize=0.6, fontcolor=red, fontsize=8, style=dotted, arrowhead=vee]").unwrap(),
+                EdgeKind::SymbolTable => writeln!(
+                    dot,
+                    "{start}:s -> {end}:w [label=\"symbols\", color=blue, arrowsize=0.6, fontcolor=blue, fontsize=8, style=dotted, arrowhead=vee]"
+                )
+                .unwrap(),
+                EdgeKind::Dominance => writeln!(
+                    dot,
+                    "{start}:ne -> {end}:s [label=\"dom\", color=red, arrowsize=0.6, fontcolor=red, fontsize=8, style=dotted, arrowhead=vee]"
+                )
+                .unwrap(),
             };
         }
 
@@ -141,7 +154,12 @@ impl Block {
 
         //let terminator: Instruction = block_data.terminator.into();
 
-        Block { id: block.0, header, instructions, symbols }
+        Block {
+            id: block.0,
+            header,
+            instructions,
+            symbols,
+        }
     }
 
     fn write_record(&self, str: &mut String) -> Result<(), std::fmt::Error> {
