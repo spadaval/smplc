@@ -3,19 +3,14 @@ use std::{
     mem::{self, Discriminant},
 };
 
-
-
 //TODO remove a bunch of the `pub` declarations and provide controlled access methods instead
-use crate::{
-    parser::{Expression},
-    tokenizer::Ident,
-};
+use crate::{parser::Expression, tokenizer::Ident};
 
 // This design is shamelessly copied from `rustc`
 #[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
 pub struct BlockId(pub usize);
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Instruction {
     pub kind: InstructionKind,
     pub dominating_instruction: Option<InstructionId>,
@@ -26,7 +21,7 @@ pub struct HeaderInstruction {
     pub kind: HeaderStatementKind,
     pub id: InstructionId,
 }
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BasicOpKind {
     Add,
     Subtract,
@@ -34,7 +29,7 @@ pub enum BasicOpKind {
     Divide,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum InstructionKind {
     Constant(i32),
     BasicOp(BasicOpKind, InstructionId, InstructionId),
@@ -100,28 +95,51 @@ impl SymbolTable {
         self.0.insert(ident, id)
     }
 
-    pub(crate) fn get_symbol(&self, instruction_id: InstructionId) -> Option<Ident> {
-        self.0.iter().filter_map(|(ident, id)| if *id==instruction_id {Some(ident.clone())} else {None}).next()
+    pub(crate) fn get_symbols(&self, instruction_id: InstructionId) -> Vec<Ident> {
+        self.0
+            .iter()
+            .filter_map(|(ident, id)| {
+                if *id == instruction_id {
+                    Some(ident.clone())
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 }
 
-#[derive(Debug, PartialEq, Clone)]
+// TODO make this not crap
+#[derive(Debug, Clone)]
 pub struct DominanceTable {
-    expressions: HashMap<Discriminant<Expression>, InstructionId>,
+    basic_ops: HashMap<InstructionKind, InstructionId>,
 }
 
 impl DominanceTable {
-    pub fn add_expression(&mut self, expr: &Expression, id: InstructionId) {
-        self.expressions.insert(mem::discriminant(expr), id);
+    pub fn add_instruction(&mut self, instruction: &InstructionKind, id: InstructionId) {
+        match instruction {
+            InstructionKind::Constant(_) => {}
+            InstructionKind::BasicOp(_, _, _) => {
+                self.basic_ops.insert(instruction.clone(), id);
+            }
+            InstructionKind::Read => {}
+            InstructionKind::Write(_) => {}
+        }
     }
 
-    pub fn get_expression(&self, expr: &Expression) -> Option<InstructionId> {
-        self.expressions.get(&mem::discriminant(expr)).copied()
+    pub fn get_dominating_instruction(
+        &self,
+        instruction: &InstructionKind,
+    ) -> Option<InstructionId> {
+        match instruction {
+            InstructionKind::BasicOp(_, _, _) => self.basic_ops.get(instruction).copied(),
+            _ => None,
+        }
     }
 
     pub fn new() -> Self {
         DominanceTable {
-            expressions: Default::default(),
+            basic_ops: Default::default(),
         }
     }
 }

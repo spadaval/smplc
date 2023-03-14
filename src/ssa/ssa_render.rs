@@ -255,10 +255,11 @@ impl Operand {
     }
 }
 struct Instruction {
-    symbol: Option<String>,
+    symbols: Vec<String>,
     id: usize,
     op: String,
     operands: Vec<Operand>,
+    dominated: Option<String>,
 }
 
 impl Instruction {
@@ -268,31 +269,43 @@ impl Instruction {
     ) -> Self {
         match instruction.kind.clone() {
             super::types::InstructionKind::Constant(c) => Instruction {
-                symbol: get_symbol(block_data, instruction.id),
+                symbols: get_symbols(block_data, instruction.id),
                 id: instruction.id.0,
                 op: "Const".to_string(),
                 operands: vec![Operand::Constant(c)],
+                dominated: instruction
+                    .dominating_instruction
+                    .map(|it| it.0.to_string()),
             },
             super::types::InstructionKind::BasicOp(_op, l, r) => Instruction {
-                symbol: get_symbol(block_data, instruction.id),
+                symbols: get_symbols(block_data, instruction.id),
                 id: instruction.id.0,
                 op: instruction.kind.clone().into(),
                 operands: vec![
                     Operand::InstructionReference(l.0),
                     Operand::InstructionReference(r.0),
                 ],
+                dominated: instruction
+                    .dominating_instruction
+                    .map(|it| it.0.to_string()),
             },
             InstructionKind::Read => Instruction {
-                symbol: get_symbol(block_data, instruction.id),
+                symbols: get_symbols(block_data, instruction.id),
                 id: instruction.id.0,
                 op: instruction.kind.clone().into(),
                 operands: Vec::new(),
+                dominated: instruction
+                    .dominating_instruction
+                    .map(|it| it.0.to_string()),
             },
             InstructionKind::Write(ins) => Instruction {
-                symbol: None,
+                symbols: Vec::new(),
                 id: instruction.id.0,
                 op: instruction.kind.clone().into(),
                 operands: vec![Operand::from(ins)],
+                dominated: instruction
+                    .dominating_instruction
+                    .map(|it| it.0.to_string()),
             },
         }
     }
@@ -300,16 +313,19 @@ impl Instruction {
     fn to_string(&self) -> String {
         //6: add (2) (2)
         let mut s = String::new();
-        match &self.symbol {
-            Some(symbol) => write!(s, "({}) {}: {}", symbol, self.id, self.op).unwrap(),
-            None => write!(s, "{}: {}", self.id, self.op).unwrap(),
+        if !self.symbols.is_empty() {
+            write!(s, "({}) ", self.symbols.join(",")).unwrap();
         }
+        write!(s, "{}: {}", self.id, self.op).unwrap();
 
         for op in &self.operands {
             match op {
                 Operand::InstructionReference(ins) => write!(s, " ({ins})").unwrap(),
                 Operand::Constant(c) => write!(s, " #{c}").unwrap(),
             };
+        }
+        if let Some(id) = &self.dominated {
+            write!(s, " (D:{})", id).unwrap();
         }
         s
     }
@@ -320,29 +336,33 @@ impl Instruction {
     ) -> Self {
         match instruction.kind {
             super::types::HeaderStatementKind::Kill(ins) => Instruction {
-                symbol: None,
+                symbols: Vec::new(),
                 id: instruction.id.0,
                 op: "kill".to_string(),
                 operands: vec![Operand::InstructionReference(ins.0)],
+                dominated: None,
             },
             super::types::HeaderStatementKind::Phi(l, r) => Instruction {
-                symbol: get_symbol(block_data, instruction.id),
+                symbols: get_symbols(block_data, instruction.id),
                 id: instruction.id.0,
                 op: "phi".to_string(),
                 operands: vec![
                     Operand::InstructionReference(l.0),
                     Operand::InstructionReference(r.0),
                 ],
+                dominated: None,
             },
         }
     }
 }
 
-fn get_symbol(block_data: &BasicBlockData, instruction: InstructionId) -> Option<String> {
+fn get_symbols(block_data: &BasicBlockData, instruction: InstructionId) -> Vec<String> {
     block_data
         .symbol_table
-        .get_symbol(instruction)
-        .map(|it| it.0)
+        .get_symbols(instruction)
+        .iter()
+        .map(|it| it.0.clone())
+        .collect()
 }
 
 impl From<InstructionKind> for String {
@@ -457,15 +477,14 @@ mod tests {
 
         let program = r"
             let a <- call InputNum();
-            let b <- 3;
-            let c <- 6; 
-            let b <- a+ b *c - 4 + 7;
-            let c <- a+ b *c - 4 + 7;
+            let b <- 1
+            let c <- 2
             let d <- a+ b *c - 4 + 7;
+            call OutputNum(d);
             let e <- a+ b *c - 4 + 7;
+            call OutputNum(e);
             let f <- a+ b *c - 4 + 7;
-            let g <- a+ b *c - 4 + 7;
-            call OutputNum(c);
+            call OutputNum(f);
         ";
         let forest = parse(crate::SourceFile::new(program));
         //println!("{forest:#?}");

@@ -1,31 +1,25 @@
-use std::{
-    collections::{HashMap},
-    fmt::Display,
-};
+use std::{collections::HashMap, fmt::Display, ops::ControlFlow};
 
 use log::{debug, info, warn};
 
-use crate::{
-    parser::{Block, Designator, Expression, Relation, Statement},
-};
+use crate::parser::{Block, Designator, Expression, Relation, Statement};
 
 use super::{cfg::ControlFlowGraph, types::*};
 
-impl Display for BasicBlockData {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if self.statements.is_empty() {
-            write!(f, "empty block")
-        } else {
-            for ele in &self.statements {
-                write!(f, " {} ", ele.id.0).unwrap();
-            }
-            Ok(())
-        }
-    }
-}
+// impl Display for BasicBlockData {
+//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+//         if self.statements.is_empty() {
+//             write!(f, "empty block")
+//         } else {
+//             for ele in &self.statements {
+//                 write!(f, " {} ", ele.id.0).unwrap();
+//             }
+//             Ok(())
+//         }
+//     }
+// }
 
 // Expression cannot lower across multiple blocks
-// TODO CSE
 fn lower_expression(
     cfg: &mut ControlFlowGraph,
     block: BlockId,
@@ -119,54 +113,7 @@ fn lower_statement(cfg: &mut ControlFlowGraph, block: BlockId, statement: Statem
             ref body,
             ref else_body,
         } => {
-            debug!("Lowering statement {:?}", statement.clone());
-            let header_block = block;
-            let condition = lower_relation(cfg, header_block, condition.clone());
-
-            let main_body = cfg.new_block(header_block);
-            let main_body_end = lower_block(cfg, main_body, body);
-
-            let follow_block = cfg.new_block(header_block);
-
-            match else_body {
-                Some(else_body) => {
-                    let else_body_start = cfg.new_block(header_block);
-
-                    cfg.set_terminator(
-                        header_block,
-                        Terminator::ConditionalBranch {
-                            condition,
-                            target: main_body,
-                            fallthrough: else_body_start,
-                        },
-                    );
-                    let else_body_end = lower_block(cfg, else_body_start, else_body);
-                    debug!(
-                        "Lowered else_body from block {} to block {}",
-                        else_body_start.0, else_body_end.0
-                    );
-                    cfg.goto(main_body_end, follow_block);
-                    cfg.goto(else_body_end, follow_block);
-                }
-                None => {
-                    debug!("Lowered condition to block {}", header_block.0);
-                    debug!(
-                        "Add edge {} -(target)-> {}, {} -(fallthrough)-> {}",
-                        header_block.0, main_body.0, header_block.0, follow_block.0
-                    );
-                    cfg.set_terminator(
-                        header_block,
-                        Terminator::ConditionalBranch {
-                            condition,
-                            target: main_body,
-                            fallthrough: follow_block,
-                        },
-                    );
-
-                    cfg.goto(main_body, follow_block);
-                }
-            }
-            follow_block
+            lower_if(&statement, block, cfg, condition, body, else_body)
         }
         Statement::While { condition, body } => lower_while(cfg, block, condition, body),
         Statement::Call(call) => {
@@ -182,7 +129,59 @@ fn lower_statement(cfg: &mut ControlFlowGraph, block: BlockId, statement: Statem
                 todo!()
             }
         }
+        Statement::Function { name, variables, body } => todo!(),
     }
+}
+
+fn lower_if(statement: &Statement, block: BlockId, cfg: &mut ControlFlowGraph, condition: &Relation, body: &Block, else_body: &Option<Block>) -> BlockId {
+    debug!("Lowering statement {:?}", statement.clone());
+    let header_block = block;
+    let condition = lower_relation(cfg, header_block, condition.clone());
+
+    let main_body = cfg.new_block(header_block);
+    let main_body_end = lower_block(cfg, main_body, body);
+
+    let follow_block = cfg.new_block(header_block);
+
+    match else_body {
+        Some(else_body) => {
+            let else_body_start = cfg.new_block(header_block);
+
+            cfg.set_terminator(
+                header_block,
+                Terminator::ConditionalBranch {
+                    condition,
+                    target: main_body,
+                    fallthrough: else_body_start,
+                },
+            );
+            let else_body_end = lower_block(cfg, else_body_start, else_body);
+            debug!(
+                "Lowered else_body from block {} to block {}",
+                else_body_start.0, else_body_end.0
+            );
+            cfg.goto(main_body_end, follow_block);
+            cfg.goto(else_body_end, follow_block);
+        }
+        None => {
+            debug!("Lowered condition to block {}", header_block.0);
+            debug!(
+                "Add edge {} -(target)-> {}, {} -(fallthrough)-> {}",
+                header_block.0, main_body.0, header_block.0, follow_block.0
+            );
+            cfg.set_terminator(
+                header_block,
+                Terminator::ConditionalBranch {
+                    condition,
+                    target: main_body,
+                    fallthrough: follow_block,
+                },
+            );
+
+            cfg.goto(main_body, follow_block);
+        }
+    }
+    follow_block
 }
 
 fn try_lower_while_body(
@@ -214,7 +213,7 @@ fn try_lower_while_body(
     let mut valid_mutations = Vec::new();
     let mut invalid_mutations = Vec::new();
 
-    warn!("Existing phis: {:?}", phis); 
+    warn!("Existing phis: {:?}", phis);
     for mutation in changed_symbols {
         if phis.contains(&mutation.old) {
             warn!("{:?} is valid", mutation);
@@ -235,9 +234,14 @@ fn lower_while(
     body: Block,
 ) -> BlockId {
     debug!("Lowering while statement ");
-    //let header_block = if cfg.get_block(root_block).is_empty() {root_block} else {cfg.new_block(root_block)};
-    let header_block = cfg.new_block(root_block);
-    cfg.goto(root_block, header_block);
+    let header_block = if cfg.get_block(root_block).is_empty() {
+        root_block
+    } else {
+        let header = cfg.new_block(root_block);
+        cfg.goto(root_block, header);
+        header
+    };
+
     // TODO extract this into a func that returns a Result
     let mut created_phis = HashMap::new();
     let mut i = 0;
@@ -254,15 +258,14 @@ fn lower_while(
         warn!("Detected invalid mutations: {:?}", invalid_mutations);
         warn!("Detected valid mutations: {:?}", valid_mutations);
 
-
         if invalid_mutations.is_empty() {
             // fix any previously generated phi statements
             for mutation in valid_mutations {
                 if let Some(instruction_id) = created_phis.get(&mutation.ident) {
-                    cfg.block_data_mut(header_block).update_phi(*instruction_id, mutation.new);
+                    cfg.block_data_mut(header_block)
+                        .update_phi(*instruction_id, mutation.new);
                 }
             }
-
 
             info!("While lowering complete");
             cfg.goto(main_body_end, header_block);

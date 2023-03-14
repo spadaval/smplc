@@ -26,6 +26,8 @@ pub enum Token {
     // misc operators
     LeftParen,
     RightParen,
+    LeftBracket,
+    RightBracket,
     Period,
     Assignment,
     // keywords
@@ -40,6 +42,7 @@ pub enum Token {
     Return,
     Do,
     Od,
+    Void,
     // structure
     Semicolon,
     Comma,
@@ -48,7 +51,7 @@ pub enum Token {
 impl Token {
     pub fn should_end_block(&self) -> bool {
         match self {
-            Token::Fi | Token::Od | Token::Else => true,
+            Token::Fi | Token::Od | Token::Else | Token::RightBracket  => true,
             _ => false,
         }
     }
@@ -71,6 +74,7 @@ fn identifier_to_keyword(token: Token) -> Option<Token> {
         "while" => Some(Token::While),
         "do" => Some(Token::Do),
         "od" => Some(Token::Od),
+        "void" => Some(Token::Void),
         _ => None,
     }
 }
@@ -215,6 +219,8 @@ impl State for Waiting {
             '/' => emit(Token::Divide),
             '(' => emit(Token::LeftParen),
             ')' => emit(Token::RightParen),
+            '{' => emit(Token::LeftBracket),
+            '}' => emit(Token::RightBracket),
             '.' => emit(Token::Period),
             ';' => emit(Token::Semicolon),
             ',' => emit(Token::Comma),
@@ -309,7 +315,7 @@ mod tests {
     use super::*;
     use crate::SourceFile;
     use pretty_assertions::assert_eq;
-    use std::{iter::zip};
+    use std::iter::zip;
 
     #[test]
     fn test_tokenize_expression() {

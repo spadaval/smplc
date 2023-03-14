@@ -1,6 +1,4 @@
-
-
-use log::{warn};
+use log::{debug, info, warn};
 
 use crate::{parser::Expression, tokenizer::Ident};
 
@@ -37,6 +35,37 @@ impl ControlFlowGraph {
         &self.basic_blocks[block_id.0]
     }
 
+    pub fn blocks(&self) -> impl Iterator<Item = (BlockId, BasicBlockData)> {
+        self.basic_blocks
+            .clone()
+            .into_iter()
+            .enumerate()
+            .map(|(id, data)| (BlockId(id), data))
+    }
+
+    //FIXME make this private
+    pub(crate) fn block_data_mut(&mut self, blk: BlockId) -> &mut BasicBlockData {
+        &mut self.basic_blocks[blk.0]
+    }
+
+    pub fn new_block(&mut self, dominating_block: BlockId) -> BlockId {
+        let dominating_block_data = self.get_block(dominating_block);
+
+        let mut data = BasicBlockData::new();
+        data.symbol_table = dominating_block_data.symbol_table.clone();
+        data.dominance_table = dominating_block_data.dominance_table.clone();
+        data.dominating_block = Some(dominating_block);
+
+        self.basic_blocks.push(data);
+        BlockId(self.basic_blocks.len() - 1)
+    }
+
+    fn new_start_block(&mut self) -> BlockId {
+        let data = BasicBlockData::new();
+        self.basic_blocks.push(data);
+        BlockId(self.basic_blocks.len() - 1)
+    }
+
     pub fn get_symbols(&self, block: BlockId) -> &SymbolTable {
         return &self.get_block(block).symbol_table;
     }
@@ -61,26 +90,57 @@ impl ControlFlowGraph {
         new_id
     }
 
-    //FIXME make this private
-    pub(crate) fn block_data_mut(&mut self, blk: BlockId) -> &mut BasicBlockData {
-        &mut self.basic_blocks[blk.0]
-    }
-
     pub fn add_instruction(
         &mut self,
         block: BlockId,
         instruction: InstructionKind,
     ) -> InstructionId {
+        let dominating_instruction = self.find_dominating_instruction(block, &instruction);
+
+        if let Some(ins) = dominating_instruction {
+            return ins;
+        }
+        
         let new_id = self.issue_instruction_id();
-        let data = self.block_data_mut(block);
         let instruction = Instruction {
             kind: instruction,
             id: new_id,
-            dominating_instruction: None,
+            dominating_instruction,
         };
 
+        let data = self.block_data_mut(block);
+        data.dominance_table
+            .add_instruction(&instruction.kind, instruction.id);
         data.statements.push(instruction);
         new_id
+    }
+
+    fn find_dominating_instruction(
+        &mut self,
+        block: BlockId,
+        instruction: &InstructionKind,
+    ) -> Option<InstructionId> {
+        let dominating_instruction = self
+            .get_block(block)
+            .dominance_table
+            .get_dominating_instruction(instruction)
+            .and_then(|it| self.get_instruction(it));
+
+        info!("Tried lookup for {instruction:?}");
+        warn!("Got {dominating_instruction:?}");
+        info!("table: {:?}", self.get_block(block).dominance_table);
+        let mut curr_dom_instruction = dominating_instruction;
+
+        while let Some(ins) = curr_dom_instruction {
+            if ins.kind == *instruction {
+                return Some(ins.id);
+            } else {
+                curr_dom_instruction = self.get_instruction(ins.id);
+                assert!(curr_dom_instruction != Some(ins));
+            }
+        }
+
+        None
     }
 
     pub fn add_header_statement(
@@ -181,24 +241,6 @@ impl ControlFlowGraph {
         new_instruction.id
     }
 
-    pub fn new_block(&mut self, dominating_block: BlockId) -> BlockId {
-        let dominating_block_data = self.get_block(dominating_block);
-
-        let mut data = BasicBlockData::new();
-        data.symbol_table = dominating_block_data.symbol_table.clone();
-        data.dominance_table = dominating_block_data.dominance_table.clone();
-        data.dominating_block = Some(dominating_block);
-
-        self.basic_blocks.push(data);
-        BlockId(self.basic_blocks.len() - 1)
-    }
-
-    fn new_start_block(&mut self) -> BlockId {
-        let data = BasicBlockData::new();
-        self.basic_blocks.push(data);
-        BlockId(self.basic_blocks.len() - 1)
-    }
-
     pub fn set_terminator(&mut self, block: BlockId, terminator: Terminator) {
         if self.block_data_mut(block).terminator.is_some() {
             panic!();
@@ -208,24 +250,6 @@ impl ControlFlowGraph {
 
     pub fn goto(&mut self, block: BlockId, target: BlockId) {
         self.set_terminator(block, Terminator::Goto(target))
-    }
-
-    pub fn blocks(&self) -> impl Iterator<Item = (BlockId, BasicBlockData)> {
-        self.basic_blocks
-            .clone()
-            .into_iter()
-            .enumerate()
-            .map(|(id, data)| (BlockId(id), data))
-    }
-
-    pub fn lookup_expression(&self, block: BlockId, expr: &Expression) -> Option<InstructionId> {
-        self.get_block(block).dominance_table.get_expression(expr)
-    }
-
-    pub fn save_expression(&mut self, block: BlockId, expr: &Expression, id: InstructionId) {
-        self.block_data_mut(block)
-            .dominance_table
-            .add_expression(expr, id);
     }
 
     pub(crate) fn set_symbol(&mut self, block: BlockId, ident: Ident, id: InstructionId) {
@@ -250,5 +274,13 @@ impl ControlFlowGraph {
                 HeaderStatementKind::Phi(_, _) => Some(header_instruction.id),
             })
             .collect()
+    }
+
+    // TODO this is way too expensive
+    fn get_instruction(&self, ins: InstructionId) -> Option<Instruction> {
+        self.basic_blocks
+            .iter()
+            .flat_map(|it| it.statements.clone())
+            .find(|it| it.id == ins)
     }
 }

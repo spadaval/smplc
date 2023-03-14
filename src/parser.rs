@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use super::tokenizer::{Ident, Token, Tokenizer};
-use log::{info};
+use log::{info, debug};
 use serde::Serialize;
 
 #[derive(Clone)]
@@ -56,6 +56,16 @@ impl Parser {
         }
     }
 
+    fn expect_ident(&mut self) -> Result<Ident, ParseError> {
+        match self.curr.clone() {
+            Some(Token::Identifier(ident)) => {
+                &self.advance();
+                Ok(ident)
+            }
+            _ => ParseError::unexpected_token(self.curr.clone()),
+        }
+    }
+
     fn advance(&mut self) -> Option<Token> {
         let token_to_return = self.curr.clone();
         self.curr = self.tokens.next();
@@ -66,6 +76,18 @@ impl Parser {
 pub struct ParseError {
     pub message: String,
 }
+impl ParseError {
+    fn unexpected_token<T>(curr: Option<Token>) -> Result<T, ParseError> {
+        Err(ParseError {
+            message: format!("Recieved unexpected token {:?}", curr),
+        })
+    }
+    fn wtf<T>() -> Result<T, ParseError> {
+        Err(ParseError {
+            message: "wtf".to_string(),
+        })
+    }
+}
 
 pub struct BlockParser;
 struct StatementParser;
@@ -74,7 +96,7 @@ pub struct ExpressionParser;
 pub struct RelationParser;
 struct TermParser;
 struct FactorParser;
-
+struct FunctionParser;
 struct LValue;
 
 #[derive(Serialize, Debug, PartialEq, Clone)]
@@ -124,11 +146,16 @@ pub enum Statement {
         body: Block,
     },
     Call(FunctionCall),
+    Function {
+        name: Ident,
+        variables: Vec<Ident>,
+        body: Block,
+    },
 }
 
 #[derive(Debug)]
 pub struct ProgramForest {
-    pub roots: Vec<Block>,
+    pub roots: Vec<Statement>,
 }
 
 pub trait Parse {
@@ -367,14 +394,63 @@ impl Parse for FactorParser {
     }
 }
 
+impl Parse for FunctionParser {
+    type Item = Statement;
+
+    fn parse(parser: &mut Parser) -> Result<Self::Item, ParseError> {
+        let func_name = parser.expect_ident()?;
+
+        info!("Got name {func_name:?}");
+        parser.expect(|it| matches!(it, Token::Var)).unwrap();
+
+        let mut vars = Vec::new();
+        loop {
+            vars.push(parser.expect_ident()?);
+            match parser.curr.clone() {
+                Some(Token::Comma) => {
+                    parser.advance();
+                }
+                Some(Token::Semicolon) => {
+                    parser.advance();
+                    break;
+                }
+                _ => return ParseError::wtf(),
+            }
+        }
+
+        parser
+            .expect(|it| matches!(it, Token::LeftBracket))
+            .unwrap();
+
+        let block = BlockParser::parse(parser)?;
+
+        parser
+            .expect(|it| matches!(it, Token::RightBracket))
+            .unwrap();
+
+        Ok(Statement::Function {
+            name: func_name,
+            variables: vars,
+            body: block,
+        })
+    }
+}
+
 // TODO handle functions and all the other crap
 pub fn parse(mut program: SourceFile) -> ProgramForest {
     let mut parser = Parser::new(program.tokens());
-    let mut blocks = Vec::new();
-    while let Ok(block) = BlockParser::parse(&mut parser) {
-        blocks.push(block);
+
+    let func = FunctionParser::parse(&mut parser).unwrap();
+    match &func {
+        t @ Statement::Function {
+            name,
+            variables,
+            body,
+        } => ProgramForest {
+            roots: vec![t.clone()],
+        },
+        _ => panic!(),
     }
-    ProgramForest { roots: blocks }
 }
 
 #[cfg(test)]
@@ -382,7 +458,7 @@ mod tests {
     use super::*;
     use crate::SourceFile;
     use pretty_assertions::assert_eq;
-    
+
     use std::rc::Rc;
 
     #[test]

@@ -9,7 +9,23 @@ use ssa::lower_block;
 pub fn lower_program(forest: ProgramForest) -> ControlFlowGraph {
     let mut cfg = ControlFlowGraph::new();
     let block = cfg.start_block();
-    lower_block(&mut cfg, block, &forest.roots[0]);
+    for statement in &forest.roots {
+        match statement {
+            crate::parser::Statement::Assign(_, _) => todo!(),
+            crate::parser::Statement::If {
+                condition,
+                body,
+                else_body,
+            } => todo!(),
+            crate::parser::Statement::While { condition, body } => todo!(),
+            crate::parser::Statement::Call(_) => todo!(),
+            crate::parser::Statement::Function {
+                name,
+                variables,
+                body,
+            } => lower_block(&mut cfg, block, body),
+        };
+    }
     cfg
 }
 
@@ -39,21 +55,21 @@ mod tests {
     }
 
     #[test]
-    fn test_if() {
+    fn test_func() {
         init();
         let program = r"
+            main 
+            var a; {
             let a <- 0;
             let b <- 10;
             if a < b
             then 
                 let b <- b + a;
             fi
+            }
         ";
-        let forest = parse(crate::SourceFile::new(program));
-        //println!("{forest:#?}");
-        let _cfg = lower_program(forest);
-        //println!("{cfg:#?}");
-        //cfg.render();
+        let dot = render_program(program.to_owned());
+        println!("{}", dot);
     }
 
     #[test]
