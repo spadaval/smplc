@@ -26,12 +26,15 @@ pub enum Token {
     // misc operators
     LeftParen,
     RightParen,
-    LeftBracket,
-    RightBracket,
+    LeftCurlyBracket,
+    RightCurlyBracket,
+    LeftSquareBracket,
+    RightSquareBracket,
     Period,
     Assignment,
     // keywords
     Var,
+    Array,
     Let,
     Call,
     If,
@@ -43,6 +46,8 @@ pub enum Token {
     Do,
     Od,
     Void,
+    Main,
+    Function,
     // structure
     Semicolon,
     Comma,
@@ -51,7 +56,7 @@ pub enum Token {
 impl Token {
     pub fn should_end_block(&self) -> bool {
         match self {
-            Token::Fi | Token::Od | Token::Else | Token::RightBracket  => true,
+            Token::Fi | Token::Od | Token::Else | Token::RightCurlyBracket => true,
             _ => false,
         }
     }
@@ -75,6 +80,9 @@ fn identifier_to_keyword(token: Token) -> Option<Token> {
         "do" => Some(Token::Do),
         "od" => Some(Token::Od),
         "void" => Some(Token::Void),
+        "array" => Some(Token::Array),
+        "main" => Some(Token::Main),
+        "function" => Some(Token::Function),
         _ => None,
     }
 }
@@ -201,7 +209,7 @@ struct Waiting;
 impl State for Waiting {
     fn accept(&mut self, curr: char, next: Option<char>) -> TokenizerResult {
         match curr {
-            '0'..='9' => transition(Number::new()),
+            '0'..='9' => transition(Number::new(true)),
             'a'..='z' | 'A'..='Z' => transition(Ident::new()),
             '<' => match next {
                 Some('-') => transition_and_advance(Assign::new()),
@@ -214,13 +222,16 @@ impl State for Waiting {
                 _ => emit(Token::GreaterThan),
             },
             '+' => emit(Token::Plus),
-            '-' => emit(Token::Minus),
+            // TODO handle negative integer literals correctly
+            '-' =>  emit(Token::Minus),
             '*' => emit(Token::Star),
             '/' => emit(Token::Divide),
             '(' => emit(Token::LeftParen),
             ')' => emit(Token::RightParen),
-            '{' => emit(Token::LeftBracket),
-            '}' => emit(Token::RightBracket),
+            '[' => emit(Token::LeftSquareBracket),
+            ']' => emit(Token::RightSquareBracket),
+            '{' => emit(Token::LeftCurlyBracket),
+            '}' => emit(Token::RightCurlyBracket),
             '.' => emit(Token::Period),
             ';' => emit(Token::Semicolon),
             ',' => emit(Token::Comma),
@@ -242,11 +253,20 @@ impl Ident {
     }
 }
 
+fn is_valid_identifier_char(next: Option<char>) -> bool {
+    if next.is_none() {
+        return false;
+    }
+
+    let c = next.unwrap();
+    c.is_alphanumeric() || c == '_'
+}
+
 impl State for IdentifierState {
     fn accept(&mut self, curr: char, next: Option<char>) -> TokenizerResult {
         self.acc.push(curr);
 
-        if next.is_none() || !next.unwrap().is_alphanumeric() {
+        if !is_valid_identifier_char(next) {
             let token = Token::Identifier(Ident(self.acc.drain(..).collect::<String>()));
             emit_and_transition(
                 identifier_to_keyword(token.clone()).unwrap_or(token),
@@ -261,10 +281,14 @@ impl State for IdentifierState {
 #[derive(Debug)]
 struct Number {
     acc: Vec<char>,
+    positive: bool,
 }
 impl Number {
-    fn new() -> Box<dyn State> {
-        Box::new(Number { acc: Vec::new() })
+    fn new(positive: bool) -> Box<dyn State> {
+        Box::new(Number {
+            acc: Vec::new(),
+            positive,
+        })
     }
 }
 
@@ -284,6 +308,7 @@ impl State for Number {
             let number = str
                 .parse::<i32>()
                 .unwrap_or_else(|_| panic!("tried to parse '{str}' to i32"));
+            let number = if self.positive { number } else { -number };
             emit_and_transition(Token::Number(number), Box::new(Waiting {}))
         } else {
             pass()

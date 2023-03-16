@@ -4,125 +4,107 @@ mod ssa;
 mod ssa_render;
 mod types;
 
+use crate::parser::Function;
 use ssa::lower_block;
 
-pub fn lower_program(forest: ProgramForest) -> ControlFlowGraph {
+pub fn lower_function(function: &Function) -> ControlFlowGraph {
     let mut cfg = ControlFlowGraph::new();
     let block = cfg.start_block();
-    for statement in &forest.roots {
-        match statement {
-            crate::parser::Statement::Assign(_, _) => todo!(),
-            crate::parser::Statement::If {
-                condition,
-                body,
-                else_body,
-            } => todo!(),
-            crate::parser::Statement::While { condition, body } => todo!(),
-            crate::parser::Statement::Call(_) => todo!(),
-            crate::parser::Statement::Function {
-                name,
-                variables,
-                body,
-            } => lower_block(&mut cfg, block, body),
-        };
+    for var in &function.variables {
+        let id = cfg.add_header_statement(block, types::HeaderStatementKind::Param(var.ident()));
+        cfg.set_symbol(block, var.ident(), id);
     }
+    let func_start = cfg.new_block(block);
+    cfg.goto(block, func_start);
+    lower_block(&mut cfg, func_start, &function.body);
+
     cfg
 }
 
-pub use ssa_render::render_program;
-pub use ssa_render::Graph;
+pub fn lower_program(forest: Program) -> Vec<ControlFlowGraph> {
+    forest
+        .functions
+        .iter()
+        .map(|func| lower_function(func))
+        .collect()
+}
 
-use crate::parser::ProgramForest;
+pub use ssa_render::render_program;
+pub use ssa_render::FunctionGraph;
+
+use crate::parser::Program;
 
 use self::cfg::ControlFlowGraph;
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pretty_env_logger::env_logger;
+    
+    use crate::{parser::parse, ssa::ssa_render::render_program, SourceFile};
 
-    use crate::{parser::parse, ssa::ssa_render::render_program};
+    fn do_test(src: &str) {
+        pretty_env_logger::init();
+        use cli_clipboard::{ClipboardContext, ClipboardProvider};
 
-    fn init() {
-        let _ = env_logger::builder().is_test(true).try_init();
-    }
-
-    #[test]
-    fn test_assign() {
-        let forest = parse(crate::SourceFile::new("let a <- a + 1"));
-        let cfg = lower_program(forest);
-        println!("{cfg:#?}");
+        let mut ctx = ClipboardContext::new().unwrap();
+        let dot = render_program(src.to_owned());
+        println!("{}", dot);
+        ctx.set_contents(dot).unwrap();
     }
 
     #[test]
     fn test_func() {
-        init();
+        let program = r"
+            main
+            var a; {
+                let n <- call InputNum();
+                let fib <- call fibbonachi(n);
+                call OutputNum(fib);
+            }
+            fibbonachi(n) {
+                let a <- 0;
+                let b <- 1;
+                let i <- 0;
+                while i < n
+                do 
+                    let i <- i + 1
+                    let sum <- a + b;
+                    let a <- b;
+                    let b <- sum;
+                od
+                return b;
+            }
+
+        ";
+        do_test(program);
+    }
+
+    #[test]
+    fn test_arrays() {
         let program = r"
             main 
-            var a; {
-            let a <- 0;
-            let b <- 10;
-            if a < b
-            then 
-                let b <- b + a;
-            fi
+            array[4] a; 
+            {
+                call bubble_sort(a, 4);
+                call OutputNum(is_sorted);
+            }
+
+            function bubble_sort(arr, size) {
+                let i <- 0;
+                while i < size do
+                    let j <- 0;
+                    while j < size - i - 1 do 
+                        if arr[j] > arr[j+1] then
+                            let temp <- arr[j]
+                            let arr[j] <- arr[j+1]
+                            let arr[j+1] <- temp
+                        fi
+                        let i <- i + 1;
+                    let j <- j+1
+                    od
+                od
             }
         ";
-        let dot = render_program(program.to_owned());
-        println!("{}", dot);
-    }
-
-    #[test]
-    fn test_dot_fibonacci() {
-        pretty_env_logger::init();
-
-        let program = r"
-            let n <- call InputNum();
-            let a <- 0;
-            let b <- 1;
-            let i <- 0;
-            while i < n
-            do 
-                let i <- i + 1
-                let sum <- a + b;
-                let a <- b;
-                let b <- sum;
-            od
-            
-            call OutputNum(b);
-        ";
-        let dot = render_program(program.to_owned());
-
-        println!("{}", dot);
-    }
-
-    #[test]
-    fn test_dot_nested() {
-        pretty_env_logger::init();
-
-        // prints multiples of 10 until n
-        let program = r"
-            let n <- call InputNum();
-            let a <- 0;
-            let b <- 1;
-            let i <- 0;
-            while i < n
-            do       
-
-                let j <- 0;
-                while j < 10
-                do
-                    let i <- i+1;
-                    let j <- i+1;
-                od
-                
-                call OutputNum(i);
-            od
-            
-            call OutputNum(b);
-        ";
-        let dot = render_program(program.to_owned());
-
-        println!("{}", dot);
+        do_test(program);
     }
 }

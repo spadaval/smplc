@@ -2,7 +2,7 @@ use std::{collections::HashMap, fmt::Display, ops::ControlFlow};
 
 use log::{debug, info, warn};
 
-use crate::parser::{Block, Designator, Expression, Relation, Statement};
+use crate::parser::{Block, Designator, Expression, Function, Relation, Statement};
 
 use super::{cfg::ControlFlowGraph, types::*};
 
@@ -28,7 +28,17 @@ fn lower_expression(
     match expr {
         Expression::Constant(c) => cfg.get_constant(*c),
         // a lookup of an uninitialized variable returns the ZERO constant
-        Expression::Identifier(ident) => cfg.resolve_symbol(block, ident.clone()),
+        Expression::Identifier(ident) => cfg.resolve_symbol(block, ident),
+        Expression::ArrayAccess(ident, offset) => {
+            let base_address = cfg.resolve_symbol(block, ident);
+            let offset_val = lower_expression(cfg, block, &*offset);
+
+            let pointer = cfg.add_instruction(
+                block,
+                InstructionKind::BasicOp(BasicOpKind::Addi, base_address, offset_val),
+            );
+            cfg.add_instruction(block, InstructionKind::Load(pointer))
+        }
         Expression::Add(l, r) => {
             let add = InstructionKind::BasicOp(
                 BasicOpKind::Add,
@@ -69,7 +79,15 @@ fn lower_expression(
                 let val = lower_expression(cfg, block, arg);
                 cfg.add_instruction(block, InstructionKind::Write(val))
             } else {
-                todo!()
+                let arguments = call
+                    .arguments
+                    .iter()
+                    .map(|expr| lower_expression(cfg, block, expr))
+                    .collect();
+                cfg.add_instruction(
+                    block,
+                    InstructionKind::Call(call.function_name.clone(), arguments),
+                )
             }
         }
     }
@@ -101,20 +119,29 @@ fn lower_relation(cfg: &mut ControlFlowGraph, block: BlockId, relation: Relation
 }
 
 fn lower_statement(cfg: &mut ControlFlowGraph, block: BlockId, statement: Statement) -> BlockId {
+    println!("{statement:?}");
     match statement {
         Statement::Assign(Designator::Ident(ident), expr) => {
             let val = lower_expression(cfg, block, &expr);
             cfg.update_symbol(block, ident, val);
             block
         }
-        Statement::Assign(Designator::ArrayIndex(_, _), _expr) => todo!(),
+        Statement::Assign(Designator::ArrayIndex(ident, offset), expr) => {
+            let val = lower_expression(cfg, block, &expr);
+            let base = cfg.resolve_symbol(block, &ident);
+            let offset = lower_expression(cfg, block, &offset);
+            let pointer = cfg.add_instruction(
+                block,
+                InstructionKind::BasicOp(BasicOpKind::Addi, base, offset),
+            );
+            cfg.add_instruction(block, InstructionKind::Store(pointer, val));
+            block
+        }
         Statement::If {
             ref condition,
             ref body,
             ref else_body,
-        } => {
-            lower_if(&statement, block, cfg, condition, body, else_body)
-        }
+        } => lower_if(cfg, &statement, block, condition, body, else_body),
         Statement::While { condition, body } => lower_while(cfg, block, condition, body),
         Statement::Call(call) => {
             if call.function_name.0 == "OutputNum" {
@@ -126,14 +153,35 @@ fn lower_statement(cfg: &mut ControlFlowGraph, block: BlockId, statement: Statem
                 cfg.add_instruction(block, InstructionKind::Write(ins));
                 block
             } else {
-                todo!()
+                let args = call
+                    .arguments
+                    .iter()
+                    .map(|it| lower_expression(cfg, block, it))
+                    .collect();
+                cfg.add_instruction(block, InstructionKind::Call(call.function_name, args));
+                block
             }
         }
-        Statement::Function { name, variables, body } => todo!(),
+        Statement::VoidReturn => {
+            cfg.add_instruction(block, InstructionKind::Return(None));
+            block
+        }
+        Statement::Return(expr) => {
+            let instruction_id = lower_expression(cfg, block, &expr);
+            cfg.add_instruction(block, InstructionKind::Return(Some(instruction_id)));
+            block
+        }
     }
 }
 
-fn lower_if(statement: &Statement, block: BlockId, cfg: &mut ControlFlowGraph, condition: &Relation, body: &Block, else_body: &Option<Block>) -> BlockId {
+fn lower_if(
+    cfg: &mut ControlFlowGraph,
+    statement: &Statement,
+    block: BlockId,
+    condition: &Relation,
+    body: &Block,
+    else_body: &Option<Block>,
+) -> BlockId {
     debug!("Lowering statement {:?}", statement.clone());
     let header_block = block;
     let condition = lower_relation(cfg, header_block, condition.clone());
@@ -304,3 +352,17 @@ pub(crate) fn lower_block(cfg: &mut ControlFlowGraph, mut blk: BlockId, block: &
     }
     blk
 }
+
+// pub fn lower_function(function: Function) -> ControlFlowGraph {
+//     let mut cfg = ControlFlowGraph::new();
+//     let start_block = cfg.start_block();
+
+//     for param in function.variables {
+//         let param_id = cfg.add_header_statement(start_block, HeaderStatementKind::Param);
+//         cfg.set_symbol(start_block, param, param_id);
+//     }
+//     let func_start = cfg.new_block(start_block);
+//     lower_block(&mut cfg, func_start, &function.body);
+
+//     cfg
+// }

@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use super::tokenizer::{Ident, Token, Tokenizer};
-use log::{info, debug};
+use log::{debug, error, info, warn};
 use serde::Serialize;
 
 #[derive(Clone)]
@@ -87,6 +87,12 @@ impl ParseError {
             message: "wtf".to_string(),
         })
     }
+
+    fn new<T>(message: &str) -> Result<T, ParseError> {
+        Err(ParseError {
+            message: message.to_string(),
+        })
+    }
 }
 
 pub struct BlockParser;
@@ -110,6 +116,7 @@ pub struct FunctionCall {
 pub enum Expression {
     Constant(i32),
     Identifier(Ident),
+    ArrayAccess(Ident, Box<Expression>),
     Add(Box<Expression>, Box<Expression>),
     Subtract(Box<Expression>, Box<Expression>),
     Multiply(Box<Expression>, Box<Expression>),
@@ -134,6 +141,27 @@ pub struct Relation {
 }
 
 #[derive(Debug, PartialEq, Clone)]
+pub enum Variable {
+    Ident(Ident),
+    Array(Ident, usize),
+}
+impl Variable {
+    pub fn ident(&self) -> Ident {
+        match self {
+            Variable::Ident(ident) => ident.clone(),
+            Variable::Array(ident, _) => ident.clone(),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct Function {
+    pub name: Ident,
+    pub variables: Vec<Variable>,
+    pub body: Block,
+}
+
+#[derive(Debug, PartialEq, Clone)]
 pub enum Statement {
     Assign(Designator, Expression),
     If {
@@ -146,16 +174,14 @@ pub enum Statement {
         body: Block,
     },
     Call(FunctionCall),
-    Function {
-        name: Ident,
-        variables: Vec<Ident>,
-        body: Block,
-    },
+    VoidReturn,
+    Return(Expression),
 }
 
 #[derive(Debug)]
-pub struct ProgramForest {
-    pub roots: Vec<Statement>,
+pub struct Program {
+    pub globals: Vec<Variable>,
+    pub functions: Vec<Function>,
 }
 
 pub trait Parse {
@@ -176,7 +202,15 @@ impl Parse for LValue {
         match parser.curr.clone() {
             Some(Token::Identifier(ident)) => {
                 parser.advance();
+                if parser.curr == Some(Token::LeftSquareBracket) {
+                    parser.advance();
+                    let offset = ExpressionParser::parse(parser)?;
+                    parser.expect(|it| *it==Token::RightSquareBracket)?;
+                    Ok(Designator::ArrayIndex(ident, offset))
+                } else {
                 Ok(Designator::Ident(ident))
+
+                }
             }
             _ => err("Failed while parsing designator"),
         }
@@ -287,7 +321,15 @@ impl Parse for StatementParser {
                     body: main_body,
                 })
             }
-            Some(Token::Return) => todo!(),
+            Some(Token::Return) => {
+                parser.advance();
+                if parser.curr == Some(Token::Semicolon) {
+                    Ok(Statement::VoidReturn)
+                } else {
+                    let ret_expr = ExpressionParser::parse(parser)?;
+                    Ok(Statement::Return(ret_expr))
+                }
+            }
             Some(t) => panic!("unexpected token {t:?} while parsing statement"),
             None => err("Tried parsing statement with no tokens left"),
         };
@@ -375,13 +417,26 @@ impl Parse for FactorParser {
     type Item = Expression;
     fn parse(parser: &mut Parser) -> Result<Expression, ParseError> {
         match parser.curr.clone() {
+            Some(Token::Minus) => {
+                parser.advance();
+                let Some(Token::Number(number)) = parser.advance() else {return ParseError::new("Failed to parse negative integer literal")};
+                Ok(Expression::Constant(-number))
+            }
             Some(Token::Number(x)) => {
                 parser.advance();
                 Ok(Expression::Constant(x))
             }
             Some(Token::Identifier(x)) => {
                 parser.advance();
-                Ok(Expression::Identifier(x))
+                match parser.curr {
+                    Some(Token::LeftSquareBracket) => {
+                        parser.advance();
+                        let offset = ExpressionParser::parse(parser)?;
+                        parser.expect(|it| *it == Token::RightSquareBracket)?;
+                        Ok(Expression::ArrayAccess(x, Box::new(offset)))
+                    }
+                    _ => Ok(Expression::Identifier(x)),
+                }
             }
             Some(Token::LeftParen) => {
                 parser.advance();
@@ -395,62 +450,112 @@ impl Parse for FactorParser {
 }
 
 impl Parse for FunctionParser {
-    type Item = Statement;
+    type Item = Function;
 
     fn parse(parser: &mut Parser) -> Result<Self::Item, ParseError> {
-        let func_name = parser.expect_ident()?;
-
-        info!("Got name {func_name:?}");
-        parser.expect(|it| matches!(it, Token::Var)).unwrap();
-
-        let mut vars = Vec::new();
-        loop {
-            vars.push(parser.expect_ident()?);
-            match parser.curr.clone() {
-                Some(Token::Comma) => {
-                    parser.advance();
-                }
-                Some(Token::Semicolon) => {
-                    parser.advance();
-                    break;
-                }
-                _ => return ParseError::wtf(),
-            }
-        }
+        let (func_name, variables) = get_func_name_and_params(parser)?;
 
         parser
-            .expect(|it| matches!(it, Token::LeftBracket))
+            .expect(|it| matches!(it, Token::LeftCurlyBracket))
             .unwrap();
 
         let block = BlockParser::parse(parser)?;
 
         parser
-            .expect(|it| matches!(it, Token::RightBracket))
+            .expect(|it| matches!(it, Token::RightCurlyBracket))
             .unwrap();
 
-        Ok(Statement::Function {
+        Ok(Function {
             name: func_name,
-            variables: vars,
+            variables,
             body: block,
         })
     }
 }
 
-// TODO handle functions and all the other crap
-pub fn parse(mut program: SourceFile) -> ProgramForest {
+fn get_func_name_and_params(parser: &mut Parser) -> Result<(Ident, Vec<Variable>), ParseError> {
+    // The main function is allowed to be unnamed
+    if parser.curr == Some(Token::LeftCurlyBracket) {
+        return Ok((Ident("main".to_owned()), Vec::new()));
+    }
+
+    parser.expect(|it| *it == Token::Function)?;
+    let func_name = parser.expect_ident()?;
+    parser.expect(|it| *it == Token::LeftParen)?;
+    let mut vars: Vec<Variable> = Vec::new();
+
+    loop {
+        vars.push(Variable::Ident(parser.expect_ident()?));
+        match parser.advance() {
+            Some(Token::Comma) => {}
+            Some(Token::RightParen) => {
+                break;
+            }
+            _ => return ParseError::new("Failed to parse vars for function"),
+        };
+    }
+
+    Ok((func_name, vars))
+}
+
+impl Parse for Program {
+    type Item = Program;
+
+    fn parse(parser: &mut Parser) -> Result<Self::Item, ParseError> {
+        let mut globals = Vec::new();
+        let mut functions = Vec::new();
+        parser.expect(|it| *it == Token::Main)?;
+
+        error!("Got main");
+        loop {
+            match parser.curr {
+                Some(Token::Var) => {
+                    parser.advance();
+                    loop {
+                        globals.push(Variable::Ident(parser.expect_ident()?));
+                        match parser.curr.clone() {
+                            Some(Token::Comma) => {
+                                parser.advance();
+                            }
+                            Some(Token::Semicolon) => {
+                                parser.advance();
+                                break;
+                            }
+                            _ => return ParseError::unexpected_token(parser.curr.clone()),
+                        }
+                    }
+                }
+                Some(Token::Array) => {
+                    info!("Parsing array");
+                    parser.advance();
+                    parser.expect(|it| *it == Token::LeftSquareBracket)?;
+                    let Some(Token::Number(size)) = parser.advance() else { return ParseError::unexpected_token(parser.curr.clone()) };
+                    parser.expect(|it| *it == Token::RightSquareBracket)?;
+
+                    let name = parser.expect_ident()?;
+                    globals.push(Variable::Array(name, size as usize));
+                    parser.expect(|it| *it == Token::Semicolon)?;
+                }
+                Some(Token::LeftCurlyBracket) => break,
+                _ => return ParseError::unexpected_token(parser.curr.clone()),
+            };
+        }
+        info!("Done parsing globals");
+        loop {
+            if parser.curr == Some(Token::Period) || parser.curr == None {
+                break;
+            }
+            functions.push(FunctionParser::parse(parser)?);
+        }
+
+        Ok(Program { globals, functions })
+    }
+}
+
+pub fn parse(mut program: SourceFile) -> Program {
     let mut parser = Parser::new(program.tokens());
 
-    let func = FunctionParser::parse(&mut parser).unwrap();
-    match &func {
-        t @ Statement::Function {
-            name,
-            variables,
-            body,
-        } => ProgramForest {
-            roots: vec![t.clone()],
-        },
-        _ => panic!(),
-    }
+    Program::parse(&mut parser).unwrap()
 }
 
 #[cfg(test)]

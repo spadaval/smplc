@@ -24,6 +24,7 @@ pub struct HeaderInstruction {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BasicOpKind {
     Add,
+    Addi,
     Subtract,
     Multiply,
     Divide,
@@ -35,6 +36,11 @@ pub enum InstructionKind {
     BasicOp(BasicOpKind, InstructionId, InstructionId),
     Read,
     Write(InstructionId),
+    Return(Option<InstructionId>),
+    Call(Ident, Vec<InstructionId>),
+    Load(InstructionId),
+    // pointer, value
+    Store(InstructionId, InstructionId)
 }
 
 #[derive(Debug, Clone)]
@@ -69,6 +75,7 @@ pub enum Terminator {
 pub enum HeaderStatementKind {
     Kill(InstructionId),
     Phi(InstructionId, InstructionId),
+    Param(Ident)
 }
 
 #[derive(Debug, Clone)]
@@ -118,12 +125,10 @@ pub struct DominanceTable {
 impl DominanceTable {
     pub fn add_instruction(&mut self, instruction: &InstructionKind, id: InstructionId) {
         match instruction {
-            InstructionKind::Constant(_) => {}
             InstructionKind::BasicOp(_, _, _) => {
                 self.basic_ops.insert(instruction.clone(), id);
             }
-            InstructionKind::Read => {}
-            InstructionKind::Write(_) => {}
+            _ => {}
         }
     }
 
@@ -184,49 +189,49 @@ impl BasicBlockData {
         }
     }
 
-    pub(crate) fn replace(&mut self, replacements: &HashMap<InstructionId, InstructionId>) {
-        self.header = self
-            .header
-            .iter()
-            .map(|instruction| match instruction.kind {
-                HeaderStatementKind::Kill(_) => todo!(),
-                HeaderStatementKind::Phi(l, r) => HeaderInstruction {
-                    kind: HeaderStatementKind::Phi(
-                        replaced(l, replacements),
-                        replaced(r, replacements),
-                    ),
-                    id: instruction.id,
-                },
-            })
-            .collect();
+    // pub(crate) fn replace(&mut self, replacements: &HashMap<InstructionId, InstructionId>) {
+    //     self.header = self
+    //         .header
+    //         .iter()
+    //         .map(|instruction| match instruction.kind {
+    //             HeaderStatementKind::Kill(_) => todo!(),
+    //             HeaderStatementKind::Phi(l, r) => HeaderInstruction {
+    //                 kind: HeaderStatementKind::Phi(
+    //                     replaced(l, replacements),
+    //                     replaced(r, replacements),
+    //                 ),
+    //                 id: instruction.id,
+    //             },
+    //         })
+    //         .collect();
 
-        self.statements = self
-            .statements
-            .iter()
-            .map(|instruction| match &instruction.kind {
-                InstructionKind::Constant(_) => instruction.clone(),
-                InstructionKind::BasicOp(op, l, r) => Instruction {
-                    kind: InstructionKind::BasicOp(
-                        *op,
-                        replaced(*l, replacements),
-                        replaced(*r, replacements),
-                    ),
-                    dominating_instruction: instruction.dominating_instruction,
-                    id: instruction.id,
-                },
-                InstructionKind::Read => instruction.clone(),
-                InstructionKind::Write(_) => instruction.clone(),
-            })
-            .collect();
-        if let Some(Terminator::ConditionalBranch {
-            ref mut condition,
-            target: _,
-            fallthrough: _,
-        }) = &mut self.terminator
-        {
-            (*condition).value = replaced(condition.value, replacements);
-        };
-    }
+    //     self.statements = self
+    //         .statements
+    //         .iter()
+    //         .map(|instruction| match &instruction.kind {
+    //             InstructionKind::Constant(_) => instruction.clone(),
+    //             InstructionKind::BasicOp(op, l, r) => Instruction {
+    //                 kind: InstructionKind::BasicOp(
+    //                     *op,
+    //                     replaced(*l, replacements),
+    //                     replaced(*r, replacements),
+    //                 ),
+    //                 dominating_instruction: instruction.dominating_instruction,
+    //                 id: instruction.id,
+    //             },
+    //             InstructionKind::Read => instruction.clone(),
+    //             InstructionKind::Write(_) => instruction.clone(),
+    //         })
+    //         .collect();
+    //     if let Some(Terminator::ConditionalBranch {
+    //         ref mut condition,
+    //         target: _,
+    //         fallthrough: _,
+    //     }) = &mut self.terminator
+    //     {
+    //         (*condition).value = replaced(condition.value, replacements);
+    //     };
+    // }
 
     pub(crate) fn update_phi(&mut self, instruction_id: InstructionId, new_target: InstructionId) {
         let ins = self
@@ -237,6 +242,7 @@ impl BasicBlockData {
         match ins.kind {
             HeaderStatementKind::Kill(_) => panic!(),
             HeaderStatementKind::Phi(_, ref mut new) => *new = new_target,
+            HeaderStatementKind::Param(_) => panic!(),
         }
     }
 

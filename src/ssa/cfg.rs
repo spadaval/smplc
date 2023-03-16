@@ -100,7 +100,7 @@ impl ControlFlowGraph {
         if let Some(ins) = dominating_instruction {
             return ins;
         }
-        
+
         let new_id = self.issue_instruction_id();
         let instruction = Instruction {
             kind: instruction,
@@ -208,14 +208,14 @@ impl ControlFlowGraph {
     }
 
     // TODO make this return an error if a symbol can't be resolved correctly (for while loops)
-    pub fn resolve_symbol(&mut self, block: BlockId, ident: Ident) -> InstructionId {
+    pub fn resolve_symbol(&mut self, block: BlockId, ident: &Ident) -> InstructionId {
         let symbol = self.block_data_mut(block).symbol_table.0.get(&ident);
 
         match symbol {
             Some(id) => id.to_owned(),
             None => {
                 let id = self.lookup_symbol(block, &ident);
-                self.block_data_mut(block).symbol_table.0.insert(ident, id);
+                self.block_data_mut(block).symbol_table.0.insert(ident.clone(), id);
                 id
             }
         }
@@ -272,6 +272,7 @@ impl ControlFlowGraph {
             .filter_map(|header_instruction| match header_instruction.kind {
                 HeaderStatementKind::Kill(_) => None,
                 HeaderStatementKind::Phi(_, _) => Some(header_instruction.id),
+                HeaderStatementKind::Param(_) => None,
             })
             .collect()
     }
