@@ -578,8 +578,8 @@ impl From<super::types::Terminator> for Instruction {
     }
 }
 
-pub fn render_program(code: String) -> String {
-    let file = SourceFile::new(&code);
+pub fn render_program(code: &str) -> String {
+    let file = SourceFile::new(code);
     let forest = parse(file);
     //println!("{forest:#?}");
 

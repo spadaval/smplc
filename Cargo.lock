@@ -324,12 +324,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "layout-rs"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1164ef87cb9607c2d887216eca79f0fc92895affe1789bba805dd38d829584e0"
-
-[[package]]
 name = "lazy_static"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -628,12 +622,10 @@ dependencies = [
  "cli-clipboard",
  "derive-new",
  "html-escape",
- "layout-rs",
  "log",
  "pretty_assertions",
  "pretty_env_logger",
  "serde",
- "termgraph",
  "ts-rs",
 ]
 
@@ -681,12 +673,6 @@ checksum = "bab24d30b911b2376f3a13cc2cd443142f0c81dda04c118693e35b3835757755"
 dependencies = [
  "winapi-util",
 ]
-
-[[package]]
-name = "termgraph"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cc58ddac58875fd4426ff58fcdfb7202a2ff795714c4ad49a8da68df41cde56e"
 
 [[package]]
 name = "thiserror"

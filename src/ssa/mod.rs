@@ -42,15 +42,7 @@ mod tests {
 
     use crate::{parser::parse, ssa::ssa_render::render_program, SourceFile};
 
-    fn do_test(src: &str) {
-        pretty_env_logger::init();
-        use cli_clipboard::{ClipboardContext, ClipboardProvider};
-
-        let mut ctx = ClipboardContext::new().unwrap();
-        let dot = render_program(src.to_owned());
-        println!("{}", dot);
-        ctx.set_contents(dot).unwrap();
-    }
+    use super::render_program as do_test;
 
     #[test]
     fn test_func() {

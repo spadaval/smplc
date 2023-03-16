@@ -230,7 +230,6 @@ fn lower_if(
                     fallthrough: follow_block,
                 },
             );
-
             cfg.goto(main_body, follow_block);
         }
     }
@@ -285,13 +284,8 @@ fn lower_while(
     body: Block,
 ) -> BlockId {
     debug!("Lowering while statement ");
-    let header_block = if cfg.get_block(root_block).is_empty() {
-        root_block
-    } else {
-        let header_block = cfg.new_block(root_block);
-        cfg.goto(root_block, header_block);
-        header_block
-    };
+    let header_block = cfg.new_block(root_block);
+    cfg.goto(root_block, header_block);
 
     let mut created_phis = HashMap::new();
     let mut i = 0;
