@@ -1,8 +1,8 @@
-use std::{collections::HashMap, fmt::Display, ops::ControlFlow};
+use std::collections::HashMap;
 
 use log::{debug, info, warn};
 
-use crate::parser::{Block, Designator, Expression, Function, Relation, Statement};
+use crate::parser::{Block, Designator, Expression, Relation, Statement, Function};
 
 use super::{cfg::ControlFlowGraph, types::*};
 
@@ -351,4 +351,18 @@ pub(crate) fn lower_block(cfg: &mut ControlFlowGraph, mut blk: BlockId, block: &
         blk = lower_statement(cfg, blk, statement.clone());
     }
     blk
+}
+
+pub fn lower_function(function: &Function) -> ControlFlowGraph {
+    let mut cfg = ControlFlowGraph::new();
+    let block = cfg.start_block();
+    for var in &function.variables {
+        let id = cfg.add_header_statement(block, HeaderStatementKind::Param(var.ident()));
+        cfg.set_symbol(block, var.ident(), id);
+    }
+    let func_start = cfg.new_block(block);
+    cfg.goto(block, func_start);
+    lower_block(&mut cfg, func_start, &function.body);
+
+    cfg
 }

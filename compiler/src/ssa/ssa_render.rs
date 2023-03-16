@@ -1,7 +1,7 @@
 use std::{collections::HashMap, fmt::Write};
 
 use crate::parser::Function;
-use crate::{lower_program, parse, SourceFile};
+use crate::{parse, SourceFile};
 
 use super::lower_function;
 use super::types::ComparisonKind;
@@ -186,7 +186,7 @@ fn collect_edges(blocks: &Vec<(BlockId, BasicBlockData)>) -> Vec<Edge> {
             match x {
                 Terminator::Goto(target) => edges.push(Edge::bb(*block, *target, EdgeKind::Goto)),
                 Terminator::ConditionalBranch {
-                    condition,
+                    condition: _,
                     target,
                     fallthrough,
                 } => {
@@ -252,11 +252,11 @@ impl Block {
         }
 
         let terminator: String = match &block_data.terminator {
-            Some(Terminator::Goto(target)) => "goto".to_owned(),
+            Some(Terminator::Goto(_target)) => "goto".to_owned(),
             Some(Terminator::ConditionalBranch {
                 condition,
-                target,
-                fallthrough,
+                target: _,
+                fallthrough: _,
             }) => format!("if {}", html_escape::encode_text(&condition.to_string())),
             None => "return".to_owned(),
         };
@@ -435,7 +435,7 @@ impl Instruction {
                 },
                 dominated: None,
             },
-            InstructionKind::Call(ident, arguments) => Instruction {
+            InstructionKind::Call(_ident, arguments) => Instruction {
                 symbols: Vec::new(),
                 id: instruction.id.0,
                 op: instruction.kind.clone().into(),

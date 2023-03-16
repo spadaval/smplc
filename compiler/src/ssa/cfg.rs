@@ -1,6 +1,6 @@
-use log::{debug, info, warn};
+use log::warn;
 
-use crate::{parser::Expression, tokenizer::Ident};
+use crate::tokenizer::Ident;
 
 use super::types::*;
 
@@ -293,17 +293,17 @@ impl ControlFlowGraph {
         self.basic_blocks.drain(start.0..self.basic_blocks.len());
     }
 
-    pub(crate) fn get_phi_instructions(&self, header_block: BlockId) -> Vec<InstructionId> {
-        self.get_block(header_block)
-            .header
-            .iter()
-            .filter_map(|header_instruction| match header_instruction.kind {
-                HeaderStatementKind::Kill(_) => None,
-                HeaderStatementKind::Phi(_, _) => Some(header_instruction.id),
-                HeaderStatementKind::Param(_) => None,
-            })
-            .collect()
-    }
+    // fn get_phi_instructions(&self, header_block: BlockId) -> Vec<InstructionId> {
+    //     self.get_block(header_block)
+    //         .header
+    //         .iter()
+    //         .filter_map(|header_instruction| match header_instruction.kind {
+    //             HeaderStatementKind::Kill(_) => None,
+    //             HeaderStatementKind::Phi(_, _) => Some(header_instruction.id),
+    //             HeaderStatementKind::Param(_) => None,
+    //         })
+    //         .collect()
+    // }
 
     // TODO this is way too expensive
     fn get_instruction(&self, ins: InstructionId) -> Option<Instruction> {

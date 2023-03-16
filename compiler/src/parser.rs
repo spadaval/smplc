@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use super::tokenizer::{Ident, Token, Tokenizer};
-use log::{debug, error, info, warn};
+use log::{error, info};
 
 #[derive(Clone)]
 pub struct SourceFile {
@@ -79,11 +79,6 @@ impl ParseError {
     fn unexpected_token<T>(curr: Option<Token>) -> Result<T, ParseError> {
         Err(ParseError {
             message: format!("Recieved unexpected token {:?}", curr),
-        })
-    }
-    fn wtf<T>() -> Result<T, ParseError> {
-        Err(ParseError {
-            message: "wtf".to_string(),
         })
     }
 
