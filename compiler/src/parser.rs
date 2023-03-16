@@ -2,7 +2,6 @@ use std::rc::Rc;
 
 use super::tokenizer::{Ident, Token, Tokenizer};
 use log::{debug, error, info, warn};
-use serde::Serialize;
 
 #[derive(Clone)]
 pub struct SourceFile {
@@ -59,7 +58,7 @@ impl Parser {
     fn expect_ident(&mut self) -> Result<Ident, ParseError> {
         match self.curr.clone() {
             Some(Token::Identifier(ident)) => {
-                &self.advance();
+                self.advance();
                 Ok(ident)
             }
             _ => ParseError::unexpected_token(self.curr.clone()),
@@ -105,14 +104,14 @@ struct FactorParser;
 struct FunctionParser;
 struct LValue;
 
-#[derive(Serialize, Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct FunctionCall {
     pub function_name: Ident,
     pub arguments: Vec<Expression>,
 }
 
 // note: this enum's discriminant is used as the key for the dominance lookup table
-#[derive(Serialize, Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Expression {
     Constant(i32),
     Identifier(Ident),
@@ -205,11 +204,10 @@ impl Parse for LValue {
                 if parser.curr == Some(Token::LeftSquareBracket) {
                     parser.advance();
                     let offset = ExpressionParser::parse(parser)?;
-                    parser.expect(|it| *it==Token::RightSquareBracket)?;
+                    parser.expect(|it| *it == Token::RightSquareBracket)?;
                     Ok(Designator::ArrayIndex(ident, offset))
                 } else {
-                Ok(Designator::Ident(ident))
-
+                    Ok(Designator::Ident(ident))
                 }
             }
             _ => err("Failed while parsing designator"),
@@ -677,7 +675,6 @@ fi
 
     #[test]
     fn test_multiline() {
-        pretty_env_logger::init();
         let program = r"
             let a <- 0;
             let b <- 10;
@@ -693,7 +690,6 @@ fi
     }
     #[test]
     fn test_parser_functions() {
-        pretty_env_logger::init();
         let program = r"
             let a <- call InputNum();        
             call OutputNum(c);

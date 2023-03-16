@@ -12,12 +12,7 @@ pub use ssa::FunctionGraph;
 pub use tokenizer::Token;
 pub use tokenizer::Tokenizer;
 
-pub fn render(src: &str) {
-    pretty_env_logger::init();
-    use cli_clipboard::{ClipboardContext, ClipboardProvider};
-
-    let mut ctx = ClipboardContext::new().unwrap();
+pub fn compile(src: &str) -> String {
     let dot = render_program(src);
-    println!("{}", dot);
-    ctx.set_contents(dot).unwrap();
+    dot
 }

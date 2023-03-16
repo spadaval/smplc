@@ -4,8 +4,7 @@ use std::{
 };
 
 use log::{debug, info};
-use serde::{Deserialize, Serialize};
-#[derive(Debug, PartialEq, Clone, Serialize, Deserialize, Eq, Hash)]
+#[derive(Debug, PartialEq, Clone, Hash, Eq)]
 pub struct Ident(pub std::string::String);
 
 #[derive(Debug, PartialEq, Clone)]
@@ -223,7 +222,7 @@ impl State for Waiting {
             },
             '+' => emit(Token::Plus),
             // TODO handle negative integer literals correctly
-            '-' =>  emit(Token::Minus),
+            '-' => emit(Token::Minus),
             '*' => emit(Token::Star),
             '/' => emit(Token::Divide),
             '(' => emit(Token::LeftParen),

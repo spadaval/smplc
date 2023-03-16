@@ -4,7 +4,7 @@ use std::{
 };
 
 //TODO remove a bunch of the `pub` declarations and provide controlled access methods instead
-use crate::{parser::Expression, tokenizer::Ident};
+use crate::tokenizer::Ident;
 
 // This design is shamelessly copied from `rustc`
 #[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]

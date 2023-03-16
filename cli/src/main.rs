@@ -1,48 +1,64 @@
-mod cfg;
-mod replacer;
-mod ssa;
-mod ssa_render;
-mod types;
+use std::{fs::File, io::Read};
 
-use crate::parser::Function;
-use ssa::lower_block;
+use clap::error::Error;
 
-pub fn lower_function(function: &Function) -> ControlFlowGraph {
-    let mut cfg = ControlFlowGraph::new();
-    let block = cfg.start_block();
-    for var in &function.variables {
-        let id = cfg.add_header_statement(block, types::HeaderStatementKind::Param(var.ident()));
-        cfg.set_symbol(block, var.ident(), id);
+use compiler::compile;
+use pretty_env_logger::env_logger;
+
+/// Simple program to greet a person
+#[derive(clap::Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// The input file
+    input_file: Option<String>,
+
+    /// Immediate input. Should not be used with `input`
+    #[arg(short, long)]
+    input_text: Option<String>,
+}
+
+fn open(s: String) -> Result<String, Error> {
+    let mut file = match File::open(s) {
+        Ok(file) => file,
+        Err(error) => panic!("Couldn't open the file: {error}"),
+    };
+
+    let mut contents = String::new();
+    match file.read_to_string(&mut contents) {
+        Ok(_) => Ok(contents),
+        Err(error) => panic!("Couldn't read the file: {error}"),
     }
-    let func_start = cfg.new_block(block);
-    cfg.goto(block, func_start);
-    lower_block(&mut cfg, func_start, &function.body);
-
-    cfg
 }
 
-pub fn lower_program(forest: Program) -> Vec<ControlFlowGraph> {
-    forest
-        .functions
-        .iter()
-        .map(|func| lower_function(func))
-        .collect()
+fn main() {
+    env_logger::init();
+    let args = <Args as clap::Parser>::parse();
+
+    let input_text = if let Some(x) = args.input_text {
+        x
+    } else if let Some(x) = args.input_file {
+        open(x).unwrap()
+    } else {
+        unreachable!()
+    };
+    compile_and_render(&input_text);
 }
 
-pub use ssa_render::render_program;
-pub use ssa_render::FunctionGraph;
+fn compile_and_render(input_text: &str) {
+    let dot = compile(input_text);
+    render(dot);
+}
 
-use crate::parser::Program;
-
-use self::cfg::ControlFlowGraph;
+use cli_clipboard::{ClipboardContext, ClipboardProvider};
+fn render(dot: String) {
+    let mut ctx = ClipboardContext::new().unwrap();
+    println!("{dot}");
+    ctx.set_contents(dot).unwrap();
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    use crate::{parser::parse, ssa::ssa_render::render_program, SourceFile};
-
-    use super::render_program as do_test;
 
     #[test]
     fn test_func() {
@@ -68,7 +84,7 @@ mod tests {
             }
 
         ";
-        do_test(program);
+        compile_and_render(program);
     }
 
     #[test]
@@ -84,7 +100,7 @@ mod tests {
                 od
             }
         ";
-        do_test(program);
+        compile_and_render(program);
     }
 
     #[test]
@@ -112,7 +128,7 @@ mod tests {
                 od
             }
         ";
-        do_test(program);
+        compile_and_render(program);
     }
 
     #[test]
@@ -137,6 +153,6 @@ var i, x, y, j;
     call OutputNum(y)
 }.
         ";
-        do_test(program);
+        compile_and_render(program);
     }
 }
