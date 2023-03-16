@@ -93,11 +93,14 @@ fn lower_expression(
     }
 }
 
-fn lower_relation(cfg: &mut ControlFlowGraph, block: BlockId, relation: Relation) -> Comparison {
-    // TODO make this a little more intelligent
+fn lower_relation(cfg: &mut ControlFlowGraph, block: BlockId, relation: &Relation) -> Comparison {
+    // TODO make this a little less fucked
     match relation.compare_op {
         crate::tokenizer::Token::LessThan => {
-            let expr = Expression::Subtract(Box::new(relation.left), Box::new(relation.right));
+            let expr = Expression::Subtract(
+                Box::new(relation.left.clone()),
+                Box::new(relation.right.clone()),
+            );
             let expr = lower_expression(cfg, block, &expr);
 
             Comparison {
@@ -106,7 +109,10 @@ fn lower_relation(cfg: &mut ControlFlowGraph, block: BlockId, relation: Relation
             }
         }
         crate::tokenizer::Token::GreaterThan => {
-            let expr = Expression::Subtract(Box::new(relation.left), Box::new(relation.right));
+            let expr = Expression::Subtract(
+                Box::new(relation.left.clone()),
+                Box::new(relation.right.clone()),
+            );
             Comparison {
                 kind: ComparisonKind::GtZero,
                 value: lower_expression(cfg, block, &expr),
@@ -119,7 +125,6 @@ fn lower_relation(cfg: &mut ControlFlowGraph, block: BlockId, relation: Relation
 }
 
 fn lower_statement(cfg: &mut ControlFlowGraph, block: BlockId, statement: Statement) -> BlockId {
-    println!("{statement:?}");
     match statement {
         Statement::Assign(Designator::Ident(ident), expr) => {
             let val = lower_expression(cfg, block, &expr);
@@ -184,7 +189,7 @@ fn lower_if(
 ) -> BlockId {
     debug!("Lowering statement {:?}", statement.clone());
     let header_block = block;
-    let condition = lower_relation(cfg, header_block, condition.clone());
+    let condition = lower_relation(cfg, header_block, condition);
 
     let main_body = cfg.new_block(header_block);
     let main_body_end = lower_block(cfg, main_body, body);
@@ -240,7 +245,6 @@ fn try_lower_while_body(
     let old_symbols = &cfg.get_symbols(header_block).clone();
 
     let main_body = cfg.new_block(header_block);
-    debug!("Lowering main body");
     let main_body_end = lower_block(cfg, main_body, body);
     info!(
         "Lowered main while body from {:?}->{:?}",
@@ -261,10 +265,9 @@ fn try_lower_while_body(
     let mut valid_mutations = Vec::new();
     let mut invalid_mutations = Vec::new();
 
-    warn!("Existing phis: {:?}", phis);
+    info!("Existing phis: {:?}", phis);
     for mutation in changed_symbols {
         if phis.contains(&mutation.old) {
-            warn!("{:?} is valid", mutation);
             valid_mutations.push(mutation);
         } else {
             warn!("{:?} is invalid", mutation);
@@ -285,12 +288,11 @@ fn lower_while(
     let header_block = if cfg.get_block(root_block).is_empty() {
         root_block
     } else {
-        let header = cfg.new_block(root_block);
-        cfg.goto(root_block, header);
-        header
+        let header_block = cfg.new_block(root_block);
+        cfg.goto(root_block, header_block);
+        header_block
     };
 
-    // TODO extract this into a func that returns a Result
     let mut created_phis = HashMap::new();
     let mut i = 0;
     loop {
@@ -300,11 +302,11 @@ fn lower_while(
         i += 1;
 
         info!("Try lowering while body (iteration {})", i);
+        let condition = lower_relation(cfg, header_block, &condition);
         let (main_body, main_body_end, valid_mutations, invalid_mutations) =
             try_lower_while_body(cfg, header_block, &body);
 
         warn!("Detected invalid mutations: {:?}", invalid_mutations);
-        warn!("Detected valid mutations: {:?}", valid_mutations);
 
         if invalid_mutations.is_empty() {
             // fix any previously generated phi statements
@@ -315,9 +317,7 @@ fn lower_while(
                 }
             }
 
-            info!("While lowering complete");
             cfg.goto(main_body_end, header_block);
-            let condition = lower_relation(cfg, header_block, condition);
             let follow_block = cfg.new_block(header_block);
             cfg.set_terminator(
                 header_block,
@@ -327,11 +327,17 @@ fn lower_while(
                     fallthrough: follow_block,
                 },
             );
+            cfg.propagate_dominance_to(root_block, follow_block);
             return follow_block;
         }
         cfg.delete(main_body);
-
-        cfg.block_data_mut(header_block).header.drain(..);
+        cfg.block_data_mut(header_block).reset();
+        // restore dominance info we lost from the reset earlier
+        // maybe checkpoints weren't such a bad idea after all?
+        for block in cfg.predeccessors(header_block) {
+            cfg.propagate_dominance_to(block, header_block);
+            cfg.propagate_symbols(block, header_block);
+        }
 
         for Mutation { ident, old, new } in invalid_mutations {
             assert!(!created_phis.contains_key(&ident));
@@ -352,17 +358,3 @@ pub(crate) fn lower_block(cfg: &mut ControlFlowGraph, mut blk: BlockId, block: &
     }
     blk
 }
-
-// pub fn lower_function(function: Function) -> ControlFlowGraph {
-//     let mut cfg = ControlFlowGraph::new();
-//     let start_block = cfg.start_block();
-
-//     for param in function.variables {
-//         let param_id = cfg.add_header_statement(start_block, HeaderStatementKind::Param);
-//         cfg.set_symbol(start_block, param, param_id);
-//     }
-//     let func_start = cfg.new_block(start_block);
-//     lower_block(&mut cfg, func_start, &function.body);
-
-//     cfg
-// }

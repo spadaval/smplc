@@ -194,7 +194,7 @@ fn collect_edges(blocks: &Vec<(BlockId, BasicBlockData)>) -> Vec<Edge> {
                     edges.push(Edge::bb(
                         *block,
                         *target,
-                        EdgeKind::Conditional(condition.to_string()),
+                        EdgeKind::Conditional("true".to_string()),
                     ));
                     edges.push(Edge::bb(
                         *block,
@@ -286,13 +286,13 @@ impl Block {
         );
         let block_name = format!("{prefix}_bb{id}");
 
-        let headers = self.header.iter().map(|it| it.to_row());
-        let ins = self.instructions.iter().map(|it| it.to_row());
-
-        let ins = headers
-            .chain(ins)
+        let ins = self
+            .header
+            .iter()
+            .chain(self.instructions.iter())
+            .map(|it| it.to_row())
             .map(|(symbols, instruction, dominance)| {
-                format!("<TR><TD>{symbols}</TD><TD>{instruction}</TD><TD>{dominance}</TD></TR>")
+                format!("<TR><TD>{symbols}</TD><TD>{instruction}</TD><TD color=\"red\">{dominance}</TD></TR>")
             })
             .collect::<Vec<String>>()
             .join("");
@@ -315,10 +315,14 @@ impl Block {
         write!(str, "{prefix}_bb{} ", self.id)?;
         let mut label = format!("<b>{}_BB{} | ", short_prefix, self.id);
         write!(label, "{{")?;
-        let headers = self.header.iter().map(|it| it.to_string());
-        let ins = self.instructions.iter().map(|it| it.to_string());
+        let headers = self.header.iter();
+        let ins = self.instructions.iter();
 
-        let ins = headers.chain(ins).collect::<Vec<String>>().join(" | ");
+        let ins = headers
+            .chain(ins)
+            .map(|it| it.to_string())
+            .collect::<Vec<String>>()
+            .join(" | ");
 
         write!(label, "{ins}")?;
 
@@ -500,7 +504,7 @@ impl Instruction {
             };
         }
         if let Some(id) = &self.dominated {
-            write!(dominance, " (D:{})", id).unwrap();
+            write!(dominance, " D:{}", id).unwrap();
         }
         (symbols, instruction, dominance)
     }

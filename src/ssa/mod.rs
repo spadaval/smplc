@@ -39,7 +39,7 @@ use self::cfg::ControlFlowGraph;
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     use crate::{parser::parse, ssa::ssa_render::render_program, SourceFile};
 
     fn do_test(src: &str) {
@@ -80,13 +80,28 @@ mod tests {
     }
 
     #[test]
-    fn test_arrays() {
+    fn test_cse() {
+        let program = r"
+            main {
+                let a <- 1+2-3+4-6;
+                let b <- 1+2-3+4-6;
+                let c <- 1+2-3+4-6;
+                while x < 1 do
+                    let z <- 1+7;
+                    call OutputNum(z);
+                od
+            }
+        ";
+        do_test(program);
+    }
+
+    #[test]
+    fn test_bubble_sort() {
         let program = r"
             main 
             array[4] a; 
             {
                 call bubble_sort(a, 4);
-                call OutputNum(is_sorted);
             }
 
             function bubble_sort(arr, size) {
@@ -104,6 +119,31 @@ mod tests {
                     od
                 od
             }
+        ";
+        do_test(program);
+    }
+
+    #[test]
+    fn test_while() {
+        let program = "
+        main
+var i, x, y, j;
+{
+    let i <- call InputNum();
+    let x <- 0;
+    let y <- 0;
+    let j <- i;
+    while x < 10 do
+        let x <- i + 1;
+        let x <- x + 1;
+        let y <- j + 1;
+        let i <- i + 1;
+    od;
+    call OutputNum(i);
+    call OutputNum(x);
+    call OutputNum(j);
+    call OutputNum(y)
+}.
         ";
         do_test(program);
     }

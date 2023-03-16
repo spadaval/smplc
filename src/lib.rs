@@ -11,3 +11,13 @@ pub use ssa::render_program;
 pub use ssa::FunctionGraph;
 pub use tokenizer::Token;
 pub use tokenizer::Tokenizer;
+
+fn render(src: &str) {
+    pretty_env_logger::init();
+    use cli_clipboard::{ClipboardContext, ClipboardProvider};
+
+    let mut ctx = ClipboardContext::new().unwrap();
+    let dot = render_program(src.to_owned());
+    println!("{}", dot);
+    ctx.set_contents(dot).unwrap();
+}

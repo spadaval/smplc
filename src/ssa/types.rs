@@ -40,7 +40,7 @@ pub enum InstructionKind {
     Call(Ident, Vec<InstructionId>),
     Load(InstructionId),
     // pointer, value
-    Store(InstructionId, InstructionId)
+    Store(InstructionId, InstructionId),
 }
 
 #[derive(Debug, Clone)]
@@ -75,7 +75,7 @@ pub enum Terminator {
 pub enum HeaderStatementKind {
     Kill(InstructionId),
     Phi(InstructionId, InstructionId),
-    Param(Ident)
+    Param(Ident),
 }
 
 #[derive(Debug, Clone)]
@@ -114,19 +114,27 @@ impl SymbolTable {
             })
             .collect()
     }
+
+    pub(crate) fn copy_from(&mut self, symbols: &SymbolTable) {
+        for (ident, id) in &symbols.0 {
+            if !self.0.contains_key(ident) {
+                self.0.insert(ident.clone(), *id);
+            }
+        }
+    }
 }
 
 // TODO make this not crap
 #[derive(Debug, Clone)]
 pub struct DominanceTable {
-    basic_ops: HashMap<InstructionKind, InstructionId>,
+    basic_ops: HashMap<Discriminant<BasicOpKind>, InstructionId>,
 }
 
 impl DominanceTable {
     pub fn add_instruction(&mut self, instruction: &InstructionKind, id: InstructionId) {
         match instruction {
-            InstructionKind::BasicOp(_, _, _) => {
-                self.basic_ops.insert(instruction.clone(), id);
+            InstructionKind::BasicOp(op, _, _) => {
+                self.basic_ops.insert(mem::discriminant(op), id);
             }
             _ => {}
         }
@@ -137,7 +145,9 @@ impl DominanceTable {
         instruction: &InstructionKind,
     ) -> Option<InstructionId> {
         match instruction {
-            InstructionKind::BasicOp(_, _, _) => self.basic_ops.get(instruction).copied(),
+            InstructionKind::BasicOp(op, _, _) => {
+                self.basic_ops.get(&mem::discriminant(op)).copied()
+            }
             _ => None,
         }
     }
@@ -145,6 +155,14 @@ impl DominanceTable {
     pub fn new() -> Self {
         DominanceTable {
             basic_ops: Default::default(),
+        }
+    }
+
+    pub(crate) fn copy_from(&mut self, table: &DominanceTable) {
+        for (key, id) in &table.basic_ops {
+            if !self.basic_ops.contains_key(key) {
+                self.basic_ops.insert(*key, *id);
+            }
         }
     }
 }
@@ -248,6 +266,10 @@ impl BasicBlockData {
 
     pub(crate) fn is_empty(&self) -> bool {
         self.header.is_empty() && self.statements.is_empty()
+    }
+
+    pub(crate) fn reset(&mut self) {
+        *self = BasicBlockData::new();
     }
 }
 

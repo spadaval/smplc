@@ -55,9 +55,31 @@ impl ControlFlowGraph {
         data.symbol_table = dominating_block_data.symbol_table.clone();
         data.dominance_table = dominating_block_data.dominance_table.clone();
         data.dominating_block = Some(dominating_block);
+        // println!("created block {}: {:?}", self.basic_blocks.len(), data.dominance_table);
+        // println!("using {:?}", dominating_block_data.dominance_table);
 
         self.basic_blocks.push(data);
         BlockId(self.basic_blocks.len() - 1)
+    }
+
+    pub fn propagate_dominance(&mut self, start_block: BlockId) {
+        let end_blocks = match self.get_block(start_block).terminator.clone() {
+            Some(Terminator::Goto(target)) => vec![target],
+            Some(Terminator::ConditionalBranch {
+                condition: _,
+                target,
+                fallthrough,
+            }) => vec![target, fallthrough],
+            None => panic!("Tried to propagate dominance with no terminator"),
+        };
+        for end_block in end_blocks {
+            self.propagate_dominance_to(start_block, end_block);
+        }
+    }
+    pub fn propagate_dominance_to(&mut self, start_block: BlockId, end_block: BlockId) {
+        let table = &self.get_block(end_block).dominance_table.clone();
+        let start = self.block_data_mut(start_block);
+        start.dominance_table.copy_from(table);
     }
 
     fn new_start_block(&mut self) -> BlockId {
@@ -95,13 +117,17 @@ impl ControlFlowGraph {
         block: BlockId,
         instruction: InstructionKind,
     ) -> InstructionId {
-        let dominating_instruction = self.find_dominating_instruction(block, &instruction);
-
-        if let Some(ins) = dominating_instruction {
+        if let Some(ins) = self.eliminate(block, &instruction) {
             return ins;
         }
 
         let new_id = self.issue_instruction_id();
+
+        let dominating_instruction = self
+            .get_block(block)
+            .dominance_table
+            .get_dominating_instruction(&instruction);
+
         let instruction = Instruction {
             kind: instruction,
             id: new_id,
@@ -115,7 +141,7 @@ impl ControlFlowGraph {
         new_id
     }
 
-    fn find_dominating_instruction(
+    fn eliminate(
         &mut self,
         block: BlockId,
         instruction: &InstructionKind,
@@ -126,17 +152,16 @@ impl ControlFlowGraph {
             .get_dominating_instruction(instruction)
             .and_then(|it| self.get_instruction(it));
 
-        info!("Tried lookup for {instruction:?}");
-        warn!("Got {dominating_instruction:?}");
-        info!("table: {:?}", self.get_block(block).dominance_table);
         let mut curr_dom_instruction = dominating_instruction;
 
-        while let Some(ins) = curr_dom_instruction {
+        while let Some(ref ins) = curr_dom_instruction {
             if ins.kind == *instruction {
                 return Some(ins.id);
             } else {
-                curr_dom_instruction = self.get_instruction(ins.id);
-                assert!(curr_dom_instruction != Some(ins));
+                curr_dom_instruction = ins
+                    .dominating_instruction
+                    .and_then(|it| self.get_instruction(it));
+                //assert!(curr_dom_instruction != Some(ins.clone()));
             }
         }
 
@@ -160,7 +185,7 @@ impl ControlFlowGraph {
     }
 
     //TODO cache this maybe?
-    fn predeccessors(&self, block: BlockId) -> Vec<BlockId> {
+    pub fn predeccessors(&self, block: BlockId) -> Vec<BlockId> {
         self.blocks()
             .filter_map(|(id, data)| match data.terminator {
                 Some(Terminator::ConditionalBranch {
@@ -215,7 +240,10 @@ impl ControlFlowGraph {
             Some(id) => id.to_owned(),
             None => {
                 let id = self.lookup_symbol(block, &ident);
-                self.block_data_mut(block).symbol_table.0.insert(ident.clone(), id);
+                self.block_data_mut(block)
+                    .symbol_table
+                    .0
+                    .insert(ident.clone(), id);
                 id
             }
         }
@@ -243,13 +271,13 @@ impl ControlFlowGraph {
 
     pub fn set_terminator(&mut self, block: BlockId, terminator: Terminator) {
         if self.block_data_mut(block).terminator.is_some() {
-            panic!();
+            panic!("Tried to overwrite a terminator");
         }
         self.block_data_mut(block).terminator = Some(terminator);
     }
 
     pub fn goto(&mut self, block: BlockId, target: BlockId) {
-        self.set_terminator(block, Terminator::Goto(target))
+        self.set_terminator(block, Terminator::Goto(target));
     }
 
     pub(crate) fn set_symbol(&mut self, block: BlockId, ident: Ident, id: InstructionId) {
@@ -283,5 +311,10 @@ impl ControlFlowGraph {
             .iter()
             .flat_map(|it| it.statements.clone())
             .find(|it| it.id == ins)
+    }
+
+    pub(crate) fn propagate_symbols(&mut self, block: BlockId, target: BlockId) {
+        let symbols = self.get_block(block).symbol_table.clone();
+        self.block_data_mut(target).symbol_table.copy_from(&symbols);
     }
 }
