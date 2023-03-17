@@ -135,23 +135,23 @@ mod tests {
     fn test_while() {
         let program = "
         main
-var i, x, y, j;
-{
-    let i <- call InputNum();
-    let x <- 0;
-    let y <- 0;
-    let j <- i;
-    while x < 10 do
-        let x <- i + 1;
-        let x <- x + 1;
-        let y <- j + 1;
-        let i <- i + 1;
-    od;
-    call OutputNum(i);
-    call OutputNum(x);
-    call OutputNum(j);
-    call OutputNum(y)
-}.
+        var i, x, y, j;
+        {
+            let i <- call InputNum();
+            let x <- 0;
+            let y <- 0;
+            let j <- i;
+            while x < 10 do
+                let x <- i + 1;
+                let x <- x + 1;
+                let y <- j + 1;
+                let i <- i + 1;
+            od;
+            call OutputNum(i);
+            call OutputNum(x);
+            call OutputNum(j);
+            call OutputNum(y)
+        }.
         ";
         compile_and_render(program);
     }

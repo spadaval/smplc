@@ -12,6 +12,9 @@ pub use ssa::FunctionGraph;
 pub use tokenizer::Token;
 pub use tokenizer::Tokenizer;
 
+use wasm_bindgen::prelude::wasm_bindgen;
+
+#[wasm_bindgen]
 pub fn compile(src: &str) -> String {
     let dot = render_program(src);
     dot
