@@ -1,5 +1,5 @@
 mod cfg;
-mod replacer;
+mod walker;
 mod ssa;
 mod ssa_render;
 mod types;

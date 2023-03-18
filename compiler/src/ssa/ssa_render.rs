@@ -456,7 +456,7 @@ impl Instruction {
                 },
                 dominated: None,
             },
-            InstructionKind::Call(_ident, arguments) => Instruction {
+            InstructionKind::Call(_, arguments) => Instruction {
                 symbols: Vec::new(),
                 id: instruction.id.0,
                 op: instruction.kind.clone().into(),
@@ -474,7 +474,9 @@ impl Instruction {
                     Operand::Ident(resolve_symbol_lookup(block_data, load.base).unwrap_or(ques)),
                     Operand::from(load.pointer, block_data),
                 ],
-                dominated: None,
+                dominated: instruction
+                    .dominating_instruction
+                    .map(|it| it.0.to_string()),
             },
             InstructionKind::Store(Store {
                 base,
@@ -489,7 +491,9 @@ impl Instruction {
                     Operand::from(pointer, block_data),
                     Operand::from(value, block_data),
                 ],
-                dominated: None,
+                dominated: instruction
+                    .dominating_instruction
+                    .map(|it| it.0.to_string()),
             },
         }
     }
@@ -559,7 +563,7 @@ impl Instruction {
                 id: instruction.id.0,
                 op: "kill".to_string(),
                 operands: vec![Operand::from(*ins, block_data)],
-                dominated: None,
+                dominated: instruction.dominator.and_then(|it| Some(it.0.to_string())),
             },
             super::types::HeaderStatementKind::Phi(l, r) => Instruction {
                 symbols: get_symbols(block_data, instruction.id),

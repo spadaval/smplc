@@ -1,4 +1,4 @@
-use log::warn;
+use log::{error, info, warn};
 
 use crate::tokenizer::Ident;
 
@@ -117,7 +117,7 @@ impl ControlFlowGraph {
         block: BlockId,
         instruction: InstructionKind,
     ) -> InstructionId {
-        if let Some(ins) = self.eliminate(block, &instruction) {
+        if let Some(ins) = self.try_eliminate(block, &instruction) {
             return ins;
         }
 
@@ -141,7 +141,7 @@ impl ControlFlowGraph {
         new_id
     }
 
-    fn eliminate(
+    fn try_eliminate_ssa(
         &mut self,
         block: BlockId,
         instruction: &InstructionKind,
@@ -164,8 +164,93 @@ impl ControlFlowGraph {
                 //assert!(curr_dom_instruction != Some(ins.clone()));
             }
         }
-
         None
+    }
+
+    fn try_eliminate_load(
+        &mut self,
+        block: BlockId,
+        load_to_eliminate: &Load,
+    ) -> Option<InstructionId> {
+        let mut next_instruction = self.get_block(block).dominance_table.get_load_store();
+
+        while let Some(ref next) = next_instruction {
+            let next_header = self.get_header(*next);
+            let next_ins = self.get_instruction(*next);
+            info!("Next header: {:?}", next_header);
+            info!("Next ins: {:?}", next_ins);
+
+            if let Some(header) = next_header {
+                match header.kind {
+                    HeaderStatementKind::Kill(kill) => {
+                        if load_to_eliminate.base == kill {
+                            info!("Not eliminating [killed] {load_to_eliminate:?}");
+                            return None;
+                        } else {
+                            next_instruction = header.dominator;
+                        }
+                    }
+                    HeaderStatementKind::Phi(_, _) => {
+                        error!(
+                            "Broken killchain at {:?} for {:?}",
+                            header, load_to_eliminate
+                        );
+                        return None;
+                    }
+                    HeaderStatementKind::Param(_) => {
+                        error!(
+                            "Broken killchain at {:?} for {:?}",
+                            header, load_to_eliminate
+                        );
+                        return None;
+                    }
+                }
+            } else if let Some(next_ins) = next_ins {
+                match next_ins.kind {
+                    InstructionKind::Load(load) => {
+                        if *load_to_eliminate == load {
+                            info!("Eliminating {load_to_eliminate:?}");
+                            return Some(next_ins.id);
+                        } else {
+                            info!("Move to {:?}", next_ins.dominating_instruction);
+                            next_instruction = next_ins.dominating_instruction;
+                        }
+                    }
+                    InstructionKind::Store(store) => {
+                        if load_to_eliminate.base == store.base {
+                            return None;
+                        } else {
+                            info!("Move to {:?}", next_ins.dominating_instruction);
+                            next_instruction = next_ins.dominating_instruction;
+                        }
+                    }
+                    _ => unreachable!(),
+                }
+            }
+        }
+        None
+    }
+
+    fn try_eliminate(
+        &mut self,
+        block: BlockId,
+        instruction: &InstructionKind,
+    ) -> Option<InstructionId> {
+        match instruction {
+            InstructionKind::Constant(_) | InstructionKind::BasicOp(_, _, _) => {
+                self.try_eliminate_ssa(block, instruction)
+            }
+
+            InstructionKind::Load(load) => self.try_eliminate_load(block, load),
+
+            // anything that can have side-effects can't be eliminated
+            // TODO eliminate pure functions?
+            InstructionKind::Read
+            | InstructionKind::Write(_)
+            | InstructionKind::Return(_)
+            | InstructionKind::Call(_, _)
+            | InstructionKind::Store(_) => None,
+        }
     }
 
     pub fn add_header_statement(
@@ -174,13 +259,26 @@ impl ControlFlowGraph {
         instruction: HeaderStatementKind,
     ) -> InstructionId {
         let new_id = self.issue_instruction_id();
-        let data = self.block_data_mut(block);
-        let instruction = HeaderInstruction {
-            kind: instruction,
-            id: new_id,
+
+        let dominator = if let HeaderStatementKind::Kill(_) = &instruction {
+            self.get_block(block).dominance_table.get_load_store()
+        } else {
+            None
         };
 
-        data.header.push(instruction);
+        let i = HeaderInstruction {
+            kind: instruction,
+            id: new_id,
+            dominator,
+        };
+
+        if let HeaderStatementKind::Kill(kill) = i.kind {
+            self.block_data_mut(block)
+                .dominance_table
+                .register_kill(kill);
+        }
+        let data = self.block_data_mut(block);
+        data.header.push(i);
         new_id
     }
 
@@ -220,18 +318,23 @@ impl ControlFlowGraph {
             .collect();
 
         if references.iter().all(|it| it.1.is_none()) {
-            let zero = self.zero_value();
-            self.const_block().symbol_table.set(ident.clone(), zero);
-            return self.zero_value();
+            return self.init_zero(ident);
         }
 
         assert!(references.len() == 2);
 
         let phi = HeaderStatementKind::Phi(
-            references[0].1.unwrap_or(self.zero_value()),
-            references[1].1.unwrap_or(self.zero_value()),
+            references[0].1.unwrap_or(self.init_zero(ident)),
+            references[1].1.unwrap_or(self.init_zero(ident)),
         );
         self.add_header_statement(block, phi)
+    }
+
+    fn init_zero(&mut self, ident: &Ident) -> InstructionId {
+        warn!("Init {:?} to zero", ident);
+        let zero = self.zero_value();
+        self.const_block().symbol_table.set(ident.clone(), zero);
+        return zero;
     }
 
     pub fn resolve_symbol(&mut self, block: BlockId, ident: &Ident) -> InstructionId {

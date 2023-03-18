@@ -45,6 +45,7 @@ fn main() {
 }
 
 fn compile_and_render(input_text: &str) {
+    pretty_env_logger::init();
     let dot = compile(input_text);
     render(dot);
 }
@@ -69,7 +70,7 @@ mod tests {
                 let fib <- call fibbonachi(n);
                 call OutputNum(fib);
             }
-            fibbonachi(n) {
+            function fibbonachi(n) {
                 let a <- 0;
                 let b <- 1;
                 let i <- 0;
@@ -88,17 +89,40 @@ mod tests {
     }
 
     #[test]
-    fn test_cse() {
+    fn test_mem() {
         let program = r"
-            main {
-                let a <- 1+2-3+4-6;
-                let b <- 1+2-3+4-6;
-                let c <- 1+2-3+4-6;
-                while x < 1 do
-                    let z <- 1+7;
-                    call OutputNum(z);
-                od
+            main 
+            var x;
+            array[6] a; {
+                let temp <- a[0];
+                call OutputNum(a[0]);
+                let a[1] <- temp;
+                call OutputNum(a[0]);
             }
+        ";
+        compile_and_render(program);
+    }
+
+    #[test]
+    fn test_arrays() {
+        let program = r"
+            main
+            var x,y,i,j;
+            array[4] a;
+            {
+                let i<-call InputNum(); 
+                let x<-0; 
+                let y<-0; 
+                let j<- i; 
+                let a[x] <- i; 
+                while x<10 do 
+                    let x <- i + 1; 
+                    let y <- a[x] + 1; 
+                    let i <-i + 1 
+                od; 
+                call OutputNum(x); 
+                call OutputNum(a[x])
+            }.
         ";
         compile_and_render(program);
     }
@@ -122,6 +146,7 @@ mod tests {
                             let arr[j] <- arr[j+1]
                             let arr[j+1] <- temp
                         fi
+                        call OutputNum(arr[j]);
                         let i <- i + 1;
                     let j <- j+1
                     od

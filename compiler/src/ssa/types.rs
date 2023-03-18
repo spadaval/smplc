@@ -3,6 +3,8 @@ use std::{
     mem::{self, Discriminant},
 };
 
+use log::warn;
+
 //TODO remove a bunch of the `pub` declarations and provide controlled access methods instead
 use crate::tokenizer::Ident;
 
@@ -20,6 +22,7 @@ pub struct Instruction {
 pub struct HeaderInstruction {
     pub kind: HeaderStatementKind,
     pub id: InstructionId,
+    pub dominator: Option<InstructionId>,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BasicOpKind {
@@ -142,6 +145,7 @@ impl SymbolTable {
 #[derive(Debug, Clone)]
 pub struct DominanceTable {
     basic_ops: HashMap<Discriminant<BasicOpKind>, InstructionId>,
+    load_store: Option<InstructionId>,
 }
 
 impl DominanceTable {
@@ -150,6 +154,7 @@ impl DominanceTable {
             InstructionKind::BasicOp(op, _, _) => {
                 self.basic_ops.insert(mem::discriminant(op), id);
             }
+            InstructionKind::Load(_) | InstructionKind::Store(_) => self.load_store = Some(id),
             _ => {}
         }
     }
@@ -162,13 +167,19 @@ impl DominanceTable {
             InstructionKind::BasicOp(op, _, _) => {
                 self.basic_ops.get(&mem::discriminant(op)).copied()
             }
+            InstructionKind::Load(_) | InstructionKind::Store(_) => self.load_store,
             _ => None,
         }
+    }
+
+    pub fn get_dominating_loadstore(&self, instruction: &InstructionKind) -> Option<InstructionId> {
+        self.load_store
     }
 
     pub fn new() -> Self {
         DominanceTable {
             basic_ops: Default::default(),
+            load_store: None,
         }
     }
 
@@ -179,15 +190,20 @@ impl DominanceTable {
             }
         }
     }
+
+    pub(crate) fn register_kill(&mut self, kill: InstructionId) {
+        self.load_store = Some(kill);
+    }
+
+    pub(crate) fn get_load_store(&self) -> Option<InstructionId> {
+        self.load_store
+    }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct DeferredKill(InstructionId);
 #[derive(Debug, Clone)]
 pub struct BasicBlockData {
     pub header: Vec<HeaderInstruction>,
     pub statements: Vec<Instruction>,
-    pub footer: Vec<DeferredKill>,
     pub terminator: Option<Terminator>,
     pub symbol_table: SymbolTable,
     pub dominance_table: DominanceTable,
@@ -214,53 +230,8 @@ impl BasicBlockData {
             symbol_table: SymbolTable(Default::default()),
             dominance_table: DominanceTable::new(),
             dominating_block: None,
-            footer: Vec::new(),
         }
     }
-
-    // pub(crate) fn replace(&mut self, replacements: &HashMap<InstructionId, InstructionId>) {
-    //     self.header = self
-    //         .header
-    //         .iter()
-    //         .map(|instruction| match instruction.kind {
-    //             HeaderStatementKind::Kill(_) => todo!(),
-    //             HeaderStatementKind::Phi(l, r) => HeaderInstruction {
-    //                 kind: HeaderStatementKind::Phi(
-    //                     replaced(l, replacements),
-    //                     replaced(r, replacements),
-    //                 ),
-    //                 id: instruction.id,
-    //             },
-    //         })
-    //         .collect();
-
-    //     self.statements = self
-    //         .statements
-    //         .iter()
-    //         .map(|instruction| match &instruction.kind {
-    //             InstructionKind::Constant(_) => instruction.clone(),
-    //             InstructionKind::BasicOp(op, l, r) => Instruction {
-    //                 kind: InstructionKind::BasicOp(
-    //                     *op,
-    //                     replaced(*l, replacements),
-    //                     replaced(*r, replacements),
-    //                 ),
-    //                 dominating_instruction: instruction.dominating_instruction,
-    //                 id: instruction.id,
-    //             },
-    //             InstructionKind::Read => instruction.clone(),
-    //             InstructionKind::Write(_) => instruction.clone(),
-    //         })
-    //         .collect();
-    //     if let Some(Terminator::ConditionalBranch {
-    //         ref mut condition,
-    //         target: _,
-    //         fallthrough: _,
-    //     }) = &mut self.terminator
-    //     {
-    //         (*condition).value = replaced(condition.value, replacements);
-    //     };
-    // }
 
     pub(crate) fn update_phi(&mut self, instruction_id: InstructionId, new_target: InstructionId) {
         let ins = self

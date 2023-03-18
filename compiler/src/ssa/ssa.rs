@@ -2,7 +2,10 @@ use std::collections::HashMap;
 
 use log::{debug, info, warn};
 
-use crate::parser::{Block, Designator, Expression, Function, Relation, Statement};
+use crate::{
+    parser::{Block, Designator, Expression, Function, Relation, Statement},
+    ssa::walker::KillFinder,
+};
 
 use super::{cfg::ControlFlowGraph, types::*};
 
@@ -19,10 +22,15 @@ fn lower_expression(
         Expression::ArrayAccess(ident, offset) => {
             let base = cfg.resolve_symbol(block, ident);
             let offset_val = lower_expression(cfg, block, &*offset);
+            let scale_constant = cfg.get_constant(4);
+            let scaled_offset = cfg.add_instruction(
+                block,
+                InstructionKind::BasicOp(BasicOpKind::Multiply, offset_val, scale_constant),
+            );
 
             let pointer = cfg.add_instruction(
                 block,
-                InstructionKind::BasicOp(BasicOpKind::Addi, base, offset_val),
+                InstructionKind::BasicOp(BasicOpKind::Addi, base, scaled_offset),
             );
             cfg.add_instruction(block, InstructionKind::Load(Load { base, pointer }))
         }
@@ -236,6 +244,11 @@ fn lower_if(
             cfg.goto(main_body, follow_block);
         }
     }
+    let kills = KillFinder::new(cfg, header_block, follow_block).collect_kills();
+    for kill in kills {
+        cfg.add_header_statement(follow_block, HeaderStatementKind::Kill(kill));
+    }
+
     follow_block
 }
 
@@ -325,8 +338,13 @@ fn lower_while(
                 },
             );
             cfg.propagate_dominance_to(root_block, follow_block);
+            let kills = KillFinder::new(cfg, header_block, follow_block).collect_kills();
+            for kill in kills {
+                cfg.add_header_statement(follow_block, HeaderStatementKind::Kill(kill));
+            }
             return follow_block;
         }
+
         cfg.delete(main_body);
         cfg.block_data_mut(header_block).reset();
         // restore dominance info we lost from the reset earlier
