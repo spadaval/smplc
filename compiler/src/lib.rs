@@ -1,5 +1,8 @@
 #![feature(associated_type_defaults)]
 #![feature(let_chains)]
+#[macro_use]
+extern crate enum_methods;
+
 mod parser;
 mod ssa;
 mod tokenizer;

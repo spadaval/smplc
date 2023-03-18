@@ -4,7 +4,7 @@ use crate::parser::Function;
 use crate::{parse, SourceFile};
 
 use super::lower_function;
-use super::types::ComparisonKind;
+use super::types::{ComparisonKind, Store};
 
 use super::cfg::ControlFlowGraph;
 use super::types::{
@@ -113,8 +113,10 @@ impl FunctionGraph {
         let blocks = cfg.blocks().collect::<Vec<(BlockId, BasicBlockData)>>();
         let edges = collect_edges(&blocks);
 
+        //TODO feature-flag the filtering
         let blocks = blocks
             .iter()
+            .filter(|(id, block)| !(block.is_empty() && cfg.predeccessors(*id).is_empty()))
             .map(|(id, bb_data)| Block::new(id, bb_data, function.name.0.clone()))
             .collect();
         FunctionGraph {
@@ -307,67 +309,72 @@ impl Block {
         writeln!(str, "{block_name} [shape=plain, label=<{label}>];")
     }
 
-    fn write_record(&self, str: &mut String) -> Result<(), std::fmt::Error> {
-        let prefix = &self.prefix;
+    // fn write_record(&self, str: &mut String) -> Result<(), std::fmt::Error> {
+    //     let prefix = &self.prefix;
 
-        let short_prefix = &self.prefix.chars().take(4).collect::<String>();
+    //     let short_prefix = &self.prefix.chars().take(4).collect::<String>();
 
-        write!(str, "{prefix}_bb{} ", self.id)?;
-        let mut label = format!("<b>{}_BB{} | ", short_prefix, self.id);
-        write!(label, "{{")?;
-        let headers = self.header.iter();
-        let ins = self.instructions.iter();
+    //     write!(str, "{prefix}_bb{} ", self.id)?;
+    //     let mut label = format!("<b>{}_BB{} | ", short_prefix, self.id);
+    //     write!(label, "{{")?;
+    //     let headers = self.header.iter();
+    //     let ins = self.instructions.iter();
 
-        let ins = headers
-            .chain(ins)
-            .map(|it| it.to_string())
-            .collect::<Vec<String>>()
-            .join(" | ");
+    //     let ins = headers
+    //         .chain(ins)
+    //         .map(|it| it.to_string())
+    //         .collect::<Vec<String>>()
+    //         .join(" | ");
 
-        write!(label, "{ins}")?;
+    //     write!(label, "{ins}")?;
 
-        write!(label, "}}")?;
+    //     write!(label, "}}")?;
 
-        writeln!(str, "[shape=record, label=\"{label}\"];")
-    }
+    //     writeln!(str, "[shape=record, label=\"{label}\"];")
+    // }
 
-    fn write_symbols(&self, str: &mut String) -> Result<Option<Edge>, std::fmt::Error> {
-        write!(str, "sym{} ", self.id)?;
-        let mut label = "".to_string(); //format!("<b>SYM{} | ", self.id);
-        write!(label, "{{")?;
+    // fn write_symbols(&self, str: &mut String) -> Result<Option<Edge>, std::fmt::Error> {
+    //     write!(str, "sym{} ", self.id)?;
+    //     let mut label = "".to_string(); //format!("<b>SYM{} | ", self.id);
+    //     write!(label, "{{")?;
 
-        let ins = self
-            .symbols
-            .iter()
-            .map(|(symbol, id)| format!("{symbol}: {id}"))
-            .collect::<Vec<String>>()
-            .join(" | ");
+    //     let ins = self
+    //         .symbols
+    //         .iter()
+    //         .map(|(symbol, id)| format!("{symbol}: {id}"))
+    //         .collect::<Vec<String>>()
+    //         .join(" | ");
 
-        write!(label, "{ins}")?;
+    //     write!(label, "{ins}")?;
 
-        write!(label, "}}")?;
+    //     write!(label, "}}")?;
 
-        writeln!(
-            str,
-            "[shape=record, fontsize=8, width=0.1, color=blue, label=\"{label}\"];"
-        )?;
-        Ok(Some(Edge::new(
-            format!("sym{0}", self.id),
-            format!("bb{0}", self.id),
-            EdgeKind::SymbolTable,
-        )))
-    }
+    //     writeln!(
+    //         str,
+    //         "[shape=record, fontsize=8, width=0.1, color=blue, label=\"{label}\"];"
+    //     )?;
+    //     Ok(Some(Edge::new(
+    //         format!("sym{0}", self.id),
+    //         format!("bb{0}", self.id),
+    //         EdgeKind::SymbolTable,
+    //     )))
+    // }
+}
+
+enum Annotation {
+    Ident(String),
+    Constant(i32),
 }
 
 #[derive(Debug)]
 enum Operand {
-    InstructionReference(usize),
+    InstructionReference(usize, Option<String>),
     Ident(String),
     Constant(i32),
 }
 impl Operand {
-    fn from(id: InstructionId) -> Operand {
-        Operand::InstructionReference(id.0)
+    fn from(id: InstructionId, block: &BasicBlockData) -> Operand {
+        Operand::InstructionReference(id.0, resolve_symbol_lookup(block, id))
     }
 }
 #[derive(Debug)]
@@ -379,11 +386,29 @@ struct Instruction {
     dominated: Option<String>,
 }
 
+fn resolve_symbol_lookup(
+    block_data: &BasicBlockData,
+    instruction: InstructionId,
+) -> Option<String> {
+    let symbols: Vec<String> = block_data
+        .symbol_table
+        .get_symbols(instruction)
+        .iter()
+        .map(|it| it.0.clone())
+        .collect::<Vec<String>>();
+    if symbols.is_empty() {
+        None
+    } else {
+        Some(symbols.join(","))
+    }
+}
+
 impl Instruction {
     fn from_intruction(
         instruction: &super::types::Instruction,
         block_data: &BasicBlockData,
     ) -> Self {
+        let ques = "?".to_owned();
         match instruction.kind.clone() {
             super::types::InstructionKind::Constant(c) => Instruction {
                 symbols: get_symbols(block_data, instruction.id),
@@ -398,10 +423,7 @@ impl Instruction {
                 symbols: get_symbols(block_data, instruction.id),
                 id: instruction.id.0,
                 op: instruction.kind.clone().into(),
-                operands: vec![
-                    Operand::InstructionReference(l.0),
-                    Operand::InstructionReference(r.0),
-                ],
+                operands: vec![Operand::from(l, block_data), Operand::from(r, block_data)],
                 dominated: instruction
                     .dominating_instruction
                     .map(|it| it.0.to_string()),
@@ -419,7 +441,7 @@ impl Instruction {
                 symbols: Vec::new(),
                 id: instruction.id.0,
                 op: instruction.kind.clone().into(),
-                operands: vec![Operand::from(ins)],
+                operands: vec![Operand::from(ins, block_data)],
                 dominated: instruction
                     .dominating_instruction
                     .map(|it| it.0.to_string()),
@@ -428,10 +450,9 @@ impl Instruction {
                 symbols: Vec::new(),
                 id: instruction.id.0,
                 op: instruction.kind.clone().into(),
-                operands: if operand.is_some() {
-                    vec![Operand::InstructionReference(operand.unwrap().0)]
-                } else {
-                    vec![]
+                operands: match operand {
+                    Some(ins) => vec![Operand::from(ins, block_data)],
+                    None => Vec::new(),
                 },
                 dominated: None,
             },
@@ -441,71 +462,90 @@ impl Instruction {
                 op: instruction.kind.clone().into(),
                 operands: arguments
                     .iter()
-                    .map(|it| Operand::InstructionReference(it.0))
+                    .map(|it| Operand::from(*it, block_data))
                     .collect(),
                 dominated: None,
             },
-            InstructionKind::Load(pointer) => Instruction {
-                symbols: Vec::new(),
-                id: instruction.id.0,
-                op: instruction.kind.clone().into(),
-                operands: vec![Operand::InstructionReference(pointer.0)],
-                dominated: None,
-            },
-            InstructionKind::Store(pointer, value) => Instruction {
+            InstructionKind::Load(load) => Instruction {
                 symbols: Vec::new(),
                 id: instruction.id.0,
                 op: instruction.kind.clone().into(),
                 operands: vec![
-                    Operand::InstructionReference(pointer.0),
-                    Operand::InstructionReference(value.0),
+                    Operand::Ident(resolve_symbol_lookup(block_data, load.base).unwrap_or(ques)),
+                    Operand::from(load.pointer, block_data),
+                ],
+                dominated: None,
+            },
+            InstructionKind::Store(Store {
+                base,
+                pointer,
+                value,
+            }) => Instruction {
+                symbols: Vec::new(),
+                id: instruction.id.0,
+                op: instruction.kind.clone().into(),
+                operands: vec![
+                    Operand::Ident(resolve_symbol_lookup(block_data, base).unwrap_or(ques)),
+                    Operand::from(pointer, block_data),
+                    Operand::from(value, block_data),
                 ],
                 dominated: None,
             },
         }
     }
 
-    fn to_string(&self) -> String {
-        //6: add (2) (2)
-        let mut s = String::new();
-        if !self.symbols.is_empty() {
-            write!(s, "({}) ", self.symbols.join(",")).unwrap();
-        }
-        write!(s, "{}: {}", self.id, self.op).unwrap();
+    // fn to_string(&self) -> String {
+    //     //6: add (2) (2)
+    //     let mut s = String::new();
+    //     if !self.symbols.is_empty() {
+    //         write!(s, "({}) ", self.symbols.join(",")).unwrap();
+    //     }
+    //     write!(s, "{}: {}", self.id, self.op).unwrap();
 
-        for op in &self.operands {
-            match op {
-                Operand::InstructionReference(ins) => write!(s, " ({ins})").unwrap(),
-                Operand::Constant(c) => write!(s, " #{c}").unwrap(),
-                Operand::Ident(str) => write!(s, " {str}").unwrap(),
-            };
-        }
-        if let Some(id) = &self.dominated {
-            write!(s, " (D:{})", id).unwrap();
-        }
-        s
-    }
+    //     for op in &self.operands {
+    //         match op {
+    //             Operand::InstructionReference(ins, symbol) => {
+    //                 write!(s, " ({ins}[{}])", symbol.clone().unwrap_or("?".to_owned())).unwrap()
+    //             }
+    //             Operand::Constant(c) => write!(s, " #{c}").unwrap(),
+    //             Operand::Ident(str) => write!(s, " {str}").unwrap(),
+    //         };
+    //     }
+    //     if let Some(id) = &self.dominated {
+    //         write!(s, " (D:{})", id).unwrap();
+    //     }
+    //     s
+    // }
 
     fn to_row(&self) -> (String, String, String) {
-        //6: add (2) (2)
-        let mut symbols = String::new();
+        let symbols = if self.symbols.is_empty() {
+            String::new()
+        } else {
+            self.symbols.join(",")
+        };
         let mut instruction = String::new();
-        let mut dominance = String::new();
-        if !self.symbols.is_empty() {
-            write!(symbols, "{}", self.symbols.join(",")).unwrap();
-        }
         write!(instruction, "{}: {}", self.id, self.op).unwrap();
 
         for op in &self.operands {
             match op {
-                Operand::InstructionReference(ins) => write!(instruction, " ({ins})").unwrap(),
+                Operand::InstructionReference(ins, symbol) => match symbol {
+                    Some(symbol) => write!(
+                        instruction,
+                        "({ins}<font color=\"purple\">:{symbol}</font>)"
+                    ),
+                    None => write!(instruction, " ({ins})",),
+                }
+                .unwrap(),
                 Operand::Constant(c) => write!(instruction, " #{c}").unwrap(),
                 Operand::Ident(str) => write!(instruction, " {str}").unwrap(),
             };
         }
-        if let Some(id) = &self.dominated {
-            write!(dominance, " D:{}", id).unwrap();
-        }
+
+        let dominance = if let Some(id) = &self.dominated {
+            format!(" D:{}", id)
+        } else {
+            String::new()
+        };
         (symbols, instruction, dominance)
     }
 
@@ -518,17 +558,14 @@ impl Instruction {
                 symbols: Vec::new(),
                 id: instruction.id.0,
                 op: "kill".to_string(),
-                operands: vec![Operand::InstructionReference(ins.0)],
+                operands: vec![Operand::from(*ins, block_data)],
                 dominated: None,
             },
             super::types::HeaderStatementKind::Phi(l, r) => Instruction {
                 symbols: get_symbols(block_data, instruction.id),
                 id: instruction.id.0,
                 op: "phi".to_string(),
-                operands: vec![
-                    Operand::InstructionReference(l.0),
-                    Operand::InstructionReference(r.0),
-                ],
+                operands: vec![Operand::from(*l, block_data), Operand::from(*r, block_data)],
                 dominated: None,
             },
             super::types::HeaderStatementKind::Param(ident) => Instruction {
@@ -565,9 +602,9 @@ impl From<InstructionKind> for String {
             InstructionKind::Read => "read".to_string(),
             InstructionKind::Write(_) => "write".to_string(),
             InstructionKind::Return(_) => "return".to_string(),
-            InstructionKind::Call(ident, _) => format!("call_{}", ident.0),
+            InstructionKind::Call(ident, _) => format!("call {}", ident.0),
             InstructionKind::Load(_) => "load".to_owned(),
-            InstructionKind::Store(_, _) => "store".to_owned(),
+            InstructionKind::Store(_) => "store".to_owned(),
         }
     }
 }
@@ -587,7 +624,9 @@ pub fn render_program(code: &str) -> String {
         .functions
         .iter()
         .map(|function| {
-            let cfg = lower_function(&function);
+            let mut cfg = lower_function(&function);
+            // TODO feature-flag this
+            cfg.skip_empty_blocks();
             FunctionGraph::new(function.clone(), cfg)
         })
         .collect();

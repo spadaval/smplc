@@ -31,6 +31,21 @@ pub enum BasicOpKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+// pointer, value
+pub struct Store {
+    pub base: InstructionId,
+    pub pointer: InstructionId,
+    pub value: InstructionId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+// pointer, value
+pub struct Load {
+    pub base: InstructionId,
+    pub pointer: InstructionId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum InstructionKind {
     Constant(i32),
     BasicOp(BasicOpKind, InstructionId, InstructionId),
@@ -38,9 +53,8 @@ pub enum InstructionKind {
     Write(InstructionId),
     Return(Option<InstructionId>),
     Call(Ident, Vec<InstructionId>),
-    Load(InstructionId),
-    // pointer, value
-    Store(InstructionId, InstructionId),
+    Load(Load),
+    Store(Store),
 }
 
 #[derive(Debug, Clone)]
@@ -61,7 +75,7 @@ pub enum ComparisonKind {
     NeZero,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, EnumIntoGetters, EnumAsGetters, EnumIsA)]
 pub enum Terminator {
     Goto(BlockId),
     ConditionalBranch {
@@ -167,10 +181,13 @@ impl DominanceTable {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct DeferredKill(InstructionId);
 #[derive(Debug, Clone)]
 pub struct BasicBlockData {
     pub header: Vec<HeaderInstruction>,
     pub statements: Vec<Instruction>,
+    pub footer: Vec<DeferredKill>,
     pub terminator: Option<Terminator>,
     pub symbol_table: SymbolTable,
     pub dominance_table: DominanceTable,
@@ -188,13 +205,6 @@ impl Mutation {
     }
 }
 
-fn replaced(
-    ins: InstructionId,
-    replacements: &HashMap<InstructionId, InstructionId>,
-) -> InstructionId {
-    replacements.get(&ins).copied().unwrap_or(ins)
-}
-
 impl BasicBlockData {
     pub fn new() -> Self {
         Self {
@@ -204,6 +214,7 @@ impl BasicBlockData {
             symbol_table: SymbolTable(Default::default()),
             dominance_table: DominanceTable::new(),
             dominating_block: None,
+            footer: Vec::new(),
         }
     }
 

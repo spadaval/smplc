@@ -2,22 +2,9 @@ use std::collections::HashMap;
 
 use log::{debug, info, warn};
 
-use crate::parser::{Block, Designator, Expression, Relation, Statement, Function};
+use crate::parser::{Block, Designator, Expression, Function, Relation, Statement};
 
 use super::{cfg::ControlFlowGraph, types::*};
-
-// impl Display for BasicBlockData {
-//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-//         if self.statements.is_empty() {
-//             write!(f, "empty block")
-//         } else {
-//             for ele in &self.statements {
-//                 write!(f, " {} ", ele.id.0).unwrap();
-//             }
-//             Ok(())
-//         }
-//     }
-// }
 
 // Expression cannot lower across multiple blocks
 fn lower_expression(
@@ -30,14 +17,14 @@ fn lower_expression(
         // a lookup of an uninitialized variable returns the ZERO constant
         Expression::Identifier(ident) => cfg.resolve_symbol(block, ident),
         Expression::ArrayAccess(ident, offset) => {
-            let base_address = cfg.resolve_symbol(block, ident);
+            let base = cfg.resolve_symbol(block, ident);
             let offset_val = lower_expression(cfg, block, &*offset);
 
             let pointer = cfg.add_instruction(
                 block,
-                InstructionKind::BasicOp(BasicOpKind::Addi, base_address, offset_val),
+                InstructionKind::BasicOp(BasicOpKind::Addi, base, offset_val),
             );
-            cfg.add_instruction(block, InstructionKind::Load(pointer))
+            cfg.add_instruction(block, InstructionKind::Load(Load { base, pointer }))
         }
         Expression::Add(l, r) => {
             let add = InstructionKind::BasicOp(
@@ -131,15 +118,31 @@ fn lower_statement(cfg: &mut ControlFlowGraph, block: BlockId, statement: Statem
             cfg.update_symbol(block, ident, val);
             block
         }
-        Statement::Assign(Designator::ArrayIndex(ident, offset), expr) => {
-            let val = lower_expression(cfg, block, &expr);
+        Statement::Assign(Designator::ArrayIndex(ref ident, ref offset), expr) => {
+            let value = lower_expression(cfg, block, &expr);
             let base = cfg.resolve_symbol(block, &ident);
             let offset = lower_expression(cfg, block, &offset);
             let pointer = cfg.add_instruction(
                 block,
                 InstructionKind::BasicOp(BasicOpKind::Addi, base, offset),
             );
-            cfg.add_instruction(block, InstructionKind::Store(pointer, val));
+            assert!(
+                matches!(
+                    cfg.get_instruction(base).and_then(|it| Some(it.kind)),
+                    Some(InstructionKind::Constant(_))
+                ) || matches!(
+                    cfg.get_header(base).and_then(|it| Some(it.kind)),
+                    Some(HeaderStatementKind::Param(_))
+                )
+            );
+            cfg.add_instruction(
+                block,
+                InstructionKind::Store(Store {
+                    base,
+                    pointer,
+                    value,
+                }),
+            );
             block
         }
         Statement::If {

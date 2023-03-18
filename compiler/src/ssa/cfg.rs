@@ -204,7 +204,7 @@ impl ControlFlowGraph {
     // If no reference exists in one or more blocks, they are initialized to zero_value.
     // If all parents don't define the variable, we simply return the zero_value.
     // this only looks one-level above, so dominance shouldn't be a problem
-    fn lookup_symbol(&mut self, block: BlockId, ident: &Ident) -> InstructionId {
+    fn lookup_or_init_symbol(&mut self, block: BlockId, ident: &Ident) -> InstructionId {
         let current_block = self.get_block(block);
         if let Some(x) = current_block.symbol_table.0.get(ident) {
             return *x;
@@ -220,6 +220,8 @@ impl ControlFlowGraph {
             .collect();
 
         if references.iter().all(|it| it.1.is_none()) {
+            let zero = self.zero_value();
+            self.const_block().symbol_table.set(ident.clone(), zero);
             return self.zero_value();
         }
 
@@ -232,14 +234,13 @@ impl ControlFlowGraph {
         self.add_header_statement(block, phi)
     }
 
-    // TODO make this return an error if a symbol can't be resolved correctly (for while loops)
     pub fn resolve_symbol(&mut self, block: BlockId, ident: &Ident) -> InstructionId {
         let symbol = self.block_data_mut(block).symbol_table.0.get(&ident);
 
         match symbol {
             Some(id) => id.to_owned(),
             None => {
-                let id = self.lookup_symbol(block, &ident);
+                let id = self.lookup_or_init_symbol(block, &ident);
                 self.block_data_mut(block)
                     .symbol_table
                     .0
@@ -293,6 +294,51 @@ impl ControlFlowGraph {
         self.basic_blocks.drain(start.0..self.basic_blocks.len());
     }
 
+    fn is_skippable(&self, block: BlockId) -> bool {
+        let block = self.get_block(block);
+        block.is_empty() && matches!(block.terminator, Some(Terminator::Goto(_)))
+    }
+
+    pub fn skip_empty_blocks(&mut self) {
+        for (block, data) in self.blocks() {
+            if self.is_skippable(block) {
+                self.block_data_mut(block).terminator = None;
+                self.block_data_mut(block).dominating_block = None;
+                let preds = self.predeccessors(block);
+                let follow = data.terminator.unwrap();
+                let follow = follow.into_goto();
+
+                for pred in preds {
+                    let pred_data = self.block_data_mut(pred);
+                    match &mut pred_data.terminator {
+                        Some(Terminator::Goto(target)) => {
+                            if *target == block {
+                                *target = follow;
+                            }
+                        }
+                        Some(Terminator::ConditionalBranch {
+                            condition: _,
+                            target,
+                            fallthrough,
+                        }) => {
+                            if *target == block {
+                                *target = follow;
+                            }
+                            if *fallthrough == block {
+                                *fallthrough = follow.clone();
+                            }
+                        }
+                        None => panic!("wtf"),
+                    }
+                    let follow_data = self.block_data_mut(follow);
+                    if follow_data.dominating_block == Some(block) {
+                        follow_data.dominating_block = Some(pred);
+                    }
+                }
+            }
+        }
+    }
+
     // fn get_phi_instructions(&self, header_block: BlockId) -> Vec<InstructionId> {
     //     self.get_block(header_block)
     //         .header
@@ -306,15 +352,28 @@ impl ControlFlowGraph {
     // }
 
     // TODO this is way too expensive
-    fn get_instruction(&self, ins: InstructionId) -> Option<Instruction> {
+    pub fn get_instruction(&self, ins: InstructionId) -> Option<Instruction> {
         self.basic_blocks
             .iter()
-            .flat_map(|it| it.statements.clone())
+            .flat_map(|it| it.statements.iter())
             .find(|it| it.id == ins)
+            .cloned()
+    }
+
+    pub fn get_header(&self, ins: InstructionId) -> Option<HeaderInstruction> {
+        self.basic_blocks
+            .iter()
+            .flat_map(|it| it.header.iter())
+            .find(|it| it.id == ins)
+            .cloned()
     }
 
     pub(crate) fn propagate_symbols(&mut self, block: BlockId, target: BlockId) {
         let symbols = self.get_block(block).symbol_table.clone();
         self.block_data_mut(target).symbol_table.copy_from(&symbols);
+    }
+
+    fn const_block(&mut self) -> &mut BasicBlockData {
+        &mut self.basic_blocks[0]
     }
 }
