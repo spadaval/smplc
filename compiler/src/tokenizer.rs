@@ -18,6 +18,7 @@ pub enum Token {
     Minus,
     Divide,
     // relational
+    Equal,
     LessThan,
     GreaterThan,
     LessThanEqual,
@@ -52,7 +53,7 @@ pub enum Token {
     // structure
     Semicolon,
     Comma,
-    Colon
+    Colon,
 }
 
 impl Token {
@@ -105,7 +106,7 @@ type TokenizerResult = Result<ConsumeResponse, TokenizerError>;
 pub struct ConsumeResponse {
     token: Option<Token>,
     transition: Option<Box<dyn State>>,
-    advance: bool,
+    advance: i32,
 }
 pub trait State: Debug {
     fn accept(&mut self, curr: char, next: Option<char>) -> TokenizerResult;
@@ -115,7 +116,7 @@ fn emit_and_transition(token: Token, transition: Box<dyn State>) -> TokenizerRes
     Ok(ConsumeResponse {
         token: Some(token),
         transition: Some(transition),
-        advance: true,
+        advance: 1,
     })
 }
 
@@ -123,7 +124,15 @@ fn emit(token: Token) -> TokenizerResult {
     Ok(ConsumeResponse {
         token: Some(token),
         transition: None,
-        advance: true,
+        advance: 1,
+    })
+}
+
+fn emit_and_skip(token: Token) -> TokenizerResult {
+    Ok(ConsumeResponse {
+        token: Some(token),
+        transition: None,
+        advance: 2,
     })
 }
 
@@ -131,7 +140,7 @@ fn transition(state: Box<dyn State>) -> TokenizerResult {
     Ok(ConsumeResponse {
         token: None,
         transition: Some(state),
-        advance: false,
+        advance: 0,
     })
 }
 
@@ -139,7 +148,7 @@ fn transition_and_advance(state: Box<dyn State>) -> TokenizerResult {
     Ok(ConsumeResponse {
         token: None,
         transition: Some(state),
-        advance: true,
+        advance: 1,
     })
 }
 
@@ -147,7 +156,7 @@ fn pass() -> TokenizerResult {
     Ok(ConsumeResponse {
         token: None,
         transition: None,
-        advance: true,
+        advance: 1,
     })
 }
 
@@ -181,18 +190,18 @@ impl Iterator for Tokenizer {
             debug!("[Tokenizer] Parsing char '{:?}'", self.curr);
 
             let curr = self.curr?;
-            let next = self.next;
-
-            let res = self.state.accept(curr, next);
+            let res = self.state.accept(curr, self.next);
             match res {
                 Err(err) => {
                     panic!("Error: {err}");
                 }
                 Ok(response) => {
-                    if response.advance {
-                        debug!("Advancing tokenstream");
-                        self.curr = next;
-                        self.next = self.characters.next();
+                    if response.advance != 0 {
+                        for i in 0..response.advance {
+                            self.curr = self.next;
+                            self.next = self.characters.next();
+                            debug!("Advancing tokenstream to {:?} ({i} of {})", self.curr, response.advance);
+                        }
                     }
                     if let Some(new_state) = response.transition {
                         debug!("Move to new state: {:?}", new_state);
@@ -217,12 +226,12 @@ impl State for Waiting {
             'a'..='z' | 'A'..='Z' => transition(Ident::new()),
             '<' => match next {
                 Some('-') => transition_and_advance(Assign::new()),
-                Some('=') => emit(Token::LessThanEqual),
+                Some('=') => emit_and_skip(Token::LessThanEqual),
                 _ => emit(Token::LessThan),
             },
             '>' => match next {
                 Some('-') => transition_and_advance(Assign::new()),
-                Some('=') => emit(Token::GreaterThanEqual),
+                Some('=') => emit_and_skip(Token::GreaterThanEqual),
                 _ => emit(Token::GreaterThan),
             },
             '+' => emit(Token::Plus),
@@ -231,6 +240,7 @@ impl State for Waiting {
             '*' => emit(Token::Star),
             '/' => emit(Token::Divide),
             '(' => emit(Token::LeftParen),
+            '=' => emit(Token::Equal),
             ')' => emit(Token::RightParen),
             '[' => emit(Token::LeftSquareBracket),
             ']' => emit(Token::RightSquareBracket),

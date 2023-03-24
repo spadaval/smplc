@@ -89,15 +89,22 @@ mod tests {
     }
 
     #[test]
-    fn test_mem() {
+    fn test_if() {
         let program = r"
             main 
             var x;
-            array[6] a; {
-                let temp <- a[0];
-                call OutputNum(a[0]);
-                let a[1] <- temp;
-                call OutputNum(a[0]);
+            {
+                if 1<=1 then 
+                    if 2=2 then 
+                        if 3=3 then 
+                            if 4=4 then
+                                call OutputNum(5)
+                            fi
+                        else
+                            call OutputNum(3)
+                        fi
+                    fi
+                fi
             }
         ";
         compile_and_render(program);
@@ -145,7 +152,11 @@ mod tests {
                             let temp <- arr[j]
                             let arr[j] <- arr[j+1]
                             let arr[j+1] <- temp
+                            
                             return 0;
+                            
+                            let a <- a+b;
+                
                         fi
                         call OutputNum(arr[j]);
                         let i <- i + 1;

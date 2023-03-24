@@ -3,6 +3,7 @@ mod ssa;
 mod ssa_render;
 mod types;
 mod walker;
+mod flags;
 
 pub use ssa::lower_function;
 

@@ -134,7 +134,15 @@ impl SymbolTable {
         let existing_def = self.0.iter_mut().find(|it| it.0.ident == *ident);
         match existing_def {
             Some(def) => *def.1 = id,
-            None => panic!("Tried to update {:?}", ident),
+            None => panic!("Tried to update an undefined variable {:?}", ident),
+        };
+    }
+
+    pub(crate) fn update_or_init(&mut self, ident: &Ident, id: InstructionId) {
+        let existing_def = self.0.iter_mut().find(|it| it.0.ident == *ident);
+        match existing_def {
+            Some(def) => *def.1 = id,
+            None => {self.0.insert(Variable::i32(ident.clone()) , id);},
         };
     }
 
@@ -195,7 +203,7 @@ impl DominanceTable {
         }
     }
 
-    pub fn get_dominating_loadstore(&self, instruction: &InstructionKind) -> Option<InstructionId> {
+    pub fn get_dominating_loadstore(&self, _instruction: &InstructionKind) -> Option<InstructionId> {
         self.load_store
     }
 

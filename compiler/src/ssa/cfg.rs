@@ -1,8 +1,15 @@
 use log::{error, info, warn};
 
-use crate::{parser::{Variable, VariableType}, tokenizer::Ident};
+use crate::{
+    parser::{Variable, VariableType},
+    ssa::flags::STORE_RESIDUAL,
+    tokenizer::Ident,
+};
 
-use super::types::*;
+use super::{
+    flags::{CONST_COMPTIME, ELIMINATE_DOMINANCE},
+    types::*,
+};
 
 #[derive(Debug)]
 pub struct ControlFlowGraph {
@@ -154,22 +161,46 @@ impl ControlFlowGraph {
         block: BlockId,
         instruction: &InstructionKind,
     ) -> Option<InstructionId> {
-        let dominating_instruction = self
-            .get_block(block)
-            .dominance_table
-            .get_dominating_instruction(instruction)
-            .and_then(|it| self.get_instruction(it));
+        //const elimination
+        if CONST_COMPTIME {
+            match instruction {
+                InstructionKind::BasicOp(op, l, r) => {
+                    let l = self.get_instruction(*l).map(|it| it.kind);
+                    let r = self.get_instruction(*r).map(|it| it.kind);
+                    if let Some(InstructionKind::Constant(left)) = l && let Some(InstructionKind::Constant(right)) = r {
+                    let val = match op {
+                        BasicOpKind::Add => left+right,
+                        BasicOpKind::Addi => left+right,
+                        BasicOpKind::Subtract => left-right,
+                        BasicOpKind::Multiply => left*right,
+                        BasicOpKind::Divide => left/right,
+                    };
+                    return Some(self.get_constant(val));
+                };
+                }
+                _ => {}
+            };
+        }
 
-        let mut curr_dom_instruction = dominating_instruction;
+        if ELIMINATE_DOMINANCE {
+            // dominance elimination
+            let dominating_instruction = self
+                .get_block(block)
+                .dominance_table
+                .get_dominating_instruction(instruction)
+                .and_then(|it| self.get_instruction(it));
 
-        while let Some(ref ins) = curr_dom_instruction {
-            if ins.kind == *instruction {
-                return Some(ins.id);
-            } else {
-                curr_dom_instruction = ins
-                    .dominating_instruction
-                    .and_then(|it| self.get_instruction(it));
-                //assert!(curr_dom_instruction != Some(ins.clone()));
+            let mut curr_dom_instruction = dominating_instruction;
+
+            while let Some(ref ins) = curr_dom_instruction {
+                if ins.kind == *instruction {
+                    return Some(ins.id);
+                } else {
+                    curr_dom_instruction = ins
+                        .dominating_instruction
+                        .and_then(|it| self.get_instruction(it));
+                    //assert!(curr_dom_instruction != Some(ins.clone()));
+                }
             }
         }
         None
@@ -226,6 +257,9 @@ impl ControlFlowGraph {
                         }
                     }
                     InstructionKind::Store(store) => {
+                        if STORE_RESIDUAL && store.pointer == load_to_eliminate.pointer {
+                            return Some(next_ins.id);
+                        }
                         if load_to_eliminate.base == store.base {
                             return None;
                         } else {
@@ -357,7 +391,9 @@ impl ControlFlowGraph {
             Some(id) => id.to_owned(),
             None => {
                 let id = self.lookup_or_init_symbol(block, &ident);
-                self.block_data_mut(block).symbol_table.update(ident, id);
+                self.block_data_mut(block)
+                    .symbol_table
+                    .update_or_init(ident, id);
                 id
             }
         }
@@ -516,7 +552,10 @@ impl ControlFlowGraph {
     }
 
     pub(crate) fn resolve_type(&self, block: BlockId, ident: &Ident) -> Option<VariableType> {
-        self.variables.iter().find(|it| it.ident==*ident).map(|it| it.dtype.clone())
+        self.variables
+            .iter()
+            .find(|it| it.ident == *ident)
+            .map(|it| it.dtype.clone())
     }
 
     pub(crate) fn register_param(&mut self, var: &Variable) {

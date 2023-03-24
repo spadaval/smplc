@@ -151,14 +151,14 @@ pub struct Variable {
     pub dtype: VariableType,
 }
 impl Variable {
-    fn i32(ident: Ident) -> Variable {
+    pub fn i32(ident: Ident) -> Variable {
         Variable {
             ident,
             dtype: VariableType::I32,
         }
     }
 
-    fn array(name: Ident, shape: Vec<usize>) -> Variable {
+    pub fn array(name: Ident, shape: Vec<usize>) -> Variable {
         Variable {
             ident: name,
             dtype: VariableType::Array(Box::new(VariableType::I32), shape),
@@ -242,6 +242,7 @@ impl Parse for RelationParser {
             Token::GreaterThan
             | Token::LessThan
             | Token::GreaterThanEqual
+            | Token::Equal
             | Token::LessThanEqual => {}
             _ => panic!("Invalid compare operation"),
         }

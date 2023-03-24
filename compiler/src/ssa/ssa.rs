@@ -1,6 +1,6 @@
-use std::{collections::HashMap};
+use std::collections::HashMap;
 
-use log::{debug, info, warn, error};
+use log::{debug, error, info, warn};
 
 use crate::{
     parser::{
@@ -9,6 +9,7 @@ use crate::{
     },
     ssa::walker::KillFinder,
     tokenizer::Ident,
+    Token,
 };
 
 use super::{cfg::ControlFlowGraph, types::*};
@@ -25,7 +26,7 @@ fn lower_expression(
         Expression::Identifier(ident) => cfg.resolve_symbol(block, ident),
         Expression::ArrayAccess(ident, offsets) => {
             let base = cfg.resolve_symbol(block, ident);
-            
+
             let Some(dtype) = cfg.resolve_type(block, ident) else {panic!("Failed to find type for {ident:?} for array access")};
 
             let pointer = calculate_pointer(cfg, block, dtype, base, offsets);
@@ -111,8 +112,36 @@ fn lower_relation(cfg: &mut ControlFlowGraph, block: BlockId, relation: &Relatio
                 value: lower_expression(cfg, block, &expr),
             }
         }
-        crate::tokenizer::Token::LessThanEqual => todo!(),
-        crate::tokenizer::Token::GreaterThanEqual => todo!(),
+        Token::Equal => {
+            let expr = Expression::Subtract(
+                Box::new(relation.left.clone()),
+                Box::new(relation.right.clone()),
+            );
+            Comparison {
+                kind: ComparisonKind::EqZero,
+                value: lower_expression(cfg, block, &expr),
+            }
+        }
+        crate::tokenizer::Token::LessThanEqual => {
+            let expr = Expression::Subtract(
+                Box::new(relation.left.clone()),
+                Box::new(relation.right.clone()),
+            );
+            Comparison {
+                kind: ComparisonKind::LteZero,
+                value: lower_expression(cfg, block, &expr),
+            }
+        }
+        crate::tokenizer::Token::GreaterThanEqual => {
+            let expr = Expression::Subtract(
+                Box::new(relation.left.clone()),
+                Box::new(relation.right.clone()),
+            );
+            Comparison {
+                kind: ComparisonKind::GteZero,
+                value: lower_expression(cfg, block, &expr),
+            }
+        }
         _ => panic!(),
     }
 }
@@ -298,7 +327,7 @@ fn lower_if(
                     fallthrough: follow_block,
                 },
             );
-            cfg.goto(main_body, follow_block);
+            cfg.goto(main_body_end, follow_block);
         }
     }
     let kills = KillFinder::new(cfg, header_block, follow_block).collect_kills();
