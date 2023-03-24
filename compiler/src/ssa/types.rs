@@ -6,7 +6,7 @@ use std::{
 use log::warn;
 
 //TODO remove a bunch of the `pub` declarations and provide controlled access methods instead
-use crate::tokenizer::Ident;
+use crate::{parser::Variable, tokenizer::Ident};
 
 // This design is shamelessly copied from `rustc`
 #[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
@@ -88,15 +88,23 @@ pub enum Terminator {
     },
 }
 
+#[derive(Debug, Copy, Clone)]
+pub enum Linkage {
+    Global,
+    Extern,
+    Local,
+}
+
 #[derive(Debug, Clone)]
 pub enum HeaderStatementKind {
     Kill(InstructionId),
     Phi(InstructionId, InstructionId),
-    Param(Ident),
+    Param(Variable),
+    Variable(Linkage, Variable),
 }
 
 #[derive(Debug, Clone)]
-pub struct SymbolTable(pub HashMap<Ident, InstructionId>);
+pub struct SymbolTable(pub HashMap<Variable, InstructionId>);
 impl SymbolTable {
     /**
      * Find all symbols that have changed between old_symbols and new_symbols.
@@ -107,24 +115,39 @@ impl SymbolTable {
     ) -> Vec<Mutation> {
         let mut symbols = Vec::new();
 
-        for (ident, old) in &old_symbols.0 {
-            if let Some(new) = new_symbols.0.get(ident) && new != old {
-                symbols.push(Mutation::new(ident.clone(), *old, *new));
+        for (var, old) in &old_symbols.0 {
+            if let Some(new) = new_symbols.0.get(var) && new != old {
+                symbols.push(Mutation::new(var.ident.clone(), *old, *new));
             }
         }
         symbols
     }
 
-    pub(crate) fn set(&mut self, ident: Ident, id: InstructionId) -> Option<InstructionId> {
-        self.0.insert(ident, id)
-    }
-
-    pub(crate) fn get_symbols(&self, instruction_id: InstructionId) -> Vec<Ident> {
+    pub fn get(&self, ident: &Ident) -> Option<InstructionId> {
         self.0
             .iter()
-            .filter_map(|(ident, id)| {
+            .find(|it| it.0.ident == *ident)
+            .map(|it| *it.1)
+    }
+
+    pub(crate) fn update(&mut self, ident: &Ident, id: InstructionId) {
+        let existing_def = self.0.iter_mut().find(|it| it.0.ident == *ident);
+        match existing_def {
+            Some(def) => *def.1 = id,
+            None => panic!("Tried to update {:?}", ident),
+        };
+    }
+
+    pub(crate) fn set(&mut self, variable: Variable, id: InstructionId) {
+        self.0.insert(variable, id);
+    }
+
+    pub(crate) fn get_symbols(&self, instruction_id: InstructionId) -> Vec<Variable> {
+        self.0
+            .iter()
+            .filter_map(|(var, id)| {
                 if *id == instruction_id {
-                    Some(ident.clone())
+                    Some(var.clone())
                 } else {
                     None
                 }
@@ -188,6 +211,9 @@ impl DominanceTable {
             if !self.basic_ops.contains_key(key) {
                 self.basic_ops.insert(*key, *id);
             }
+            if self.load_store.is_none() {
+                self.load_store = table.load_store;
+            }
         }
     }
 
@@ -240,9 +266,8 @@ impl BasicBlockData {
             .find(|it| it.id == instruction_id)
             .unwrap();
         match ins.kind {
-            HeaderStatementKind::Kill(_) => panic!(),
             HeaderStatementKind::Phi(_, ref mut new) => *new = new_target,
-            HeaderStatementKind::Param(_) => panic!(),
+            _ => panic!(),
         }
     }
 

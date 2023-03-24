@@ -110,7 +110,7 @@ pub struct FunctionCall {
 pub enum Expression {
     Constant(i32),
     Identifier(Ident),
-    ArrayAccess(Ident, Box<Expression>),
+    ArrayAccess(Ident, Vec<Expression>),
     Add(Box<Expression>, Box<Expression>),
     Subtract(Box<Expression>, Box<Expression>),
     Multiply(Box<Expression>, Box<Expression>),
@@ -124,7 +124,7 @@ pub struct Block(pub Vec<Statement>);
 #[derive(Debug, PartialEq, Clone)]
 pub enum Designator {
     Ident(Ident),
-    ArrayIndex(Ident, Expression),
+    ArrayIndex(Ident, Vec<Expression>),
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -134,16 +134,34 @@ pub struct Relation {
     pub right: Expression,
 }
 
-#[derive(Debug, PartialEq, Clone)]
-pub enum Variable {
-    Ident(Ident),
-    Array(Ident, usize),
+#[derive(Debug, PartialEq, Clone, Eq, Hash)]
+pub enum VariableType {
+    I32,
+    F32,
+    Array(Box<VariableType>, Vec<usize>),
+}
+impl VariableType {
+    pub(crate) fn size(&self) -> usize {
+        return 4;
+    }
+}
+#[derive(Debug, PartialEq, Clone, Eq, Hash)]
+pub struct Variable {
+    pub ident: Ident,
+    pub dtype: VariableType,
 }
 impl Variable {
-    pub fn ident(&self) -> Ident {
-        match self {
-            Variable::Ident(ident) => ident.clone(),
-            Variable::Array(ident, _) => ident.clone(),
+    fn i32(ident: Ident) -> Variable {
+        Variable {
+            ident,
+            dtype: VariableType::I32,
+        }
+    }
+
+    fn array(name: Ident, shape: Vec<usize>) -> Variable {
+        Variable {
+            ident: name,
+            dtype: VariableType::Array(Box::new(VariableType::I32), shape),
         }
     }
 }
@@ -196,13 +214,16 @@ impl Parse for LValue {
         match parser.curr.clone() {
             Some(Token::Identifier(ident)) => {
                 parser.advance();
-                if parser.curr == Some(Token::LeftSquareBracket) {
+                let mut offsets = Vec::new();
+                while parser.curr == Some(Token::LeftSquareBracket) {
                     parser.advance();
-                    let offset = ExpressionParser::parse(parser)?;
+                    offsets.push(ExpressionParser::parse(parser)?);
                     parser.expect(|it| *it == Token::RightSquareBracket)?;
-                    Ok(Designator::ArrayIndex(ident, offset))
-                } else {
+                }
+                if offsets.is_empty() {
                     Ok(Designator::Ident(ident))
+                } else {
+                    Ok(Designator::ArrayIndex(ident, offsets))
                 }
             }
             _ => err("Failed while parsing designator"),
@@ -406,30 +427,49 @@ impl Parse for TermParser {
     }
 }
 
+struct SubFactor;
+
+impl Parse for SubFactor {
+    type Item = Expression;
+
+    fn parse(parser: &mut Parser) -> Result<Self::Item, ParseError> {
+        match parser.curr.clone() {
+            Some(Token::Number(number)) => {
+                parser.advance();
+                Ok(Expression::Constant(number))
+            }
+            Some(Token::Identifier(ident)) => {
+                parser.advance();
+                let mut offsets = Vec::new();
+
+                while parser.curr == Some(Token::LeftSquareBracket) {
+                    parser.advance();
+                    let offset = ExpressionParser::parse(parser)?;
+                    offsets.push(offset);
+                    parser.expect(|it| *it == Token::RightSquareBracket)?;
+                }
+
+                if offsets.is_empty() {
+                    Ok(Expression::Identifier(ident))
+                } else {
+                    Ok(Expression::ArrayAccess(ident, offsets))
+                }
+            }
+            _ => ParseError::unexpected_token(parser.curr.clone()),
+        }
+    }
+}
+
 impl Parse for FactorParser {
     type Item = Expression;
     fn parse(parser: &mut Parser) -> Result<Expression, ParseError> {
         match parser.curr.clone() {
             Some(Token::Minus) => {
                 parser.advance();
-                let Some(Token::Number(number)) = parser.advance() else {return ParseError::new("Failed to parse negative integer literal")};
-                Ok(Expression::Constant(-number))
-            }
-            Some(Token::Number(x)) => {
-                parser.advance();
-                Ok(Expression::Constant(x))
-            }
-            Some(Token::Identifier(x)) => {
-                parser.advance();
-                match parser.curr {
-                    Some(Token::LeftSquareBracket) => {
-                        parser.advance();
-                        let offset = ExpressionParser::parse(parser)?;
-                        parser.expect(|it| *it == Token::RightSquareBracket)?;
-                        Ok(Expression::ArrayAccess(x, Box::new(offset)))
-                    }
-                    _ => Ok(Expression::Identifier(x)),
-                }
+                Ok(Expression::Subtract(
+                    Box::new(Expression::Constant(0)),
+                    Box::new(SubFactor::parse(parser)?),
+                ))
             }
             Some(Token::LeftParen) => {
                 parser.advance();
@@ -437,7 +477,7 @@ impl Parse for FactorParser {
                 parser.expect(|t| matches!(t, Token::RightParen))?;
                 expr
             }
-            _ => err("Failed to parse factor"),
+            _ => SubFactor::parse(parser),
         }
     }
 }
@@ -474,17 +514,55 @@ fn get_func_name_and_params(parser: &mut Parser) -> Result<(Ident, Vec<Variable>
 
     parser.expect(|it| *it == Token::Function)?;
     let func_name = parser.expect_ident()?;
+
     parser.expect(|it| *it == Token::LeftParen)?;
     let mut vars: Vec<Variable> = Vec::new();
 
     loop {
-        vars.push(Variable::Ident(parser.expect_ident()?));
+        let ident = parser.expect_ident()?;
+        let dtype = if parser.curr == Some(Token::Colon) {
+            parser.advance();
+            match parser.advance() {
+                Some(Token::I32) => VariableType::I32,
+                Some(Token::F32) => VariableType::F32,
+                Some(Token::LeftSquareBracket) => {
+                    let dtype = match parser.advance() {
+                        Some(Token::I32) => VariableType::I32,
+                        Some(Token::F32) => VariableType::F32,
+                        _ => panic!("Failed to parse array type annotation"),
+                    };
+
+                    parser.expect(|it| *it == Token::Semicolon)?;
+
+                    let mut shape = Vec::new();
+
+                    loop {
+                        if let Some(Token::Number(num)) = parser.curr {
+                            parser.advance();
+                            shape.push(num as usize);
+                        } else {
+                            break;
+                        }
+                    }
+                    parser.expect(|it| *it == Token::RightSquareBracket)?;
+
+                    VariableType::Array(Box::new(dtype), shape)
+                }
+                _ => panic!("Failed to parse type annotation"),
+            }
+        } else {
+            VariableType::I32
+        };
+        vars.push(Variable {
+            ident: ident,
+            dtype,
+        });
         match parser.advance() {
             Some(Token::Comma) => {}
             Some(Token::RightParen) => {
                 break;
             }
-            _ => return ParseError::new("Failed to parse vars for function"),
+            t => return ParseError::unexpected_token(t),
         };
     }
 
@@ -505,7 +583,7 @@ impl Parse for Program {
                 Some(Token::Var) => {
                     parser.advance();
                     loop {
-                        globals.push(Variable::Ident(parser.expect_ident()?));
+                        globals.push(Variable::i32(parser.expect_ident()?));
                         match parser.curr.clone() {
                             Some(Token::Comma) => {
                                 parser.advance();
@@ -521,12 +599,23 @@ impl Parse for Program {
                 Some(Token::Array) => {
                     info!("Parsing array");
                     parser.advance();
-                    parser.expect(|it| *it == Token::LeftSquareBracket)?;
-                    let Some(Token::Number(size)) = parser.advance() else { return ParseError::unexpected_token(parser.curr.clone()) };
-                    parser.expect(|it| *it == Token::RightSquareBracket)?;
+
+                    let mut shape = Vec::new();
+                    loop {
+                        if parser.curr != Some(Token::LeftSquareBracket) {
+                            break;
+                        }
+                        parser.advance();
+                        let Some(Token::Number(size)) = parser.advance() else { return ParseError::unexpected_token(parser.curr.clone()) };
+                        shape.push(size as usize);
+                        parser.expect(|it| *it == Token::RightSquareBracket)?;
+                    }
+                    if shape.is_empty() {
+                        return ParseError::new("wtf");
+                    }
 
                     let name = parser.expect_ident()?;
-                    globals.push(Variable::Array(name, size as usize));
+                    globals.push(Variable::array(name, shape));
                     parser.expect(|it| *it == Token::Semicolon)?;
                 }
                 Some(Token::LeftCurlyBracket) => break,

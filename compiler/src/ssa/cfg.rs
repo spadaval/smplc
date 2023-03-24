@@ -1,6 +1,6 @@
 use log::{error, info, warn};
 
-use crate::tokenizer::Ident;
+use crate::{parser::{Variable, VariableType}, tokenizer::Ident};
 
 use super::types::*;
 
@@ -8,16 +8,24 @@ use super::types::*;
 pub struct ControlFlowGraph {
     basic_blocks: Vec<BasicBlockData>,
     instruction_count: usize,
+    variables: Vec<Variable>,
 }
 
 impl ControlFlowGraph {
-    pub fn new() -> Self {
+    pub fn new(globals: &Vec<Variable>, linkage: Linkage) -> Self {
         let mut cfg = ControlFlowGraph {
             basic_blocks: Vec::new(),
             instruction_count: 0,
+            variables: globals.to_owned(),
         };
         let const_block_id = cfg.new_start_block();
         cfg.get_constant(0);
+
+        for var in globals {
+            let header = HeaderStatementKind::Variable(linkage, var.clone());
+            let id = cfg.add_header_statement(const_block_id, header);
+            cfg.set_symbol(const_block_id, var, id);
+        }
 
         let start_block_id = cfg.new_block(const_block_id);
 
@@ -29,6 +37,10 @@ impl ControlFlowGraph {
     pub fn start_block(&self) -> BlockId {
         assert!(self.basic_blocks.len() >= 2);
         BlockId(1)
+    }
+
+    pub fn const_block_id(&self) -> BlockId {
+        BlockId(0)
     }
 
     pub(crate) fn get_block(&self, block_id: BlockId) -> &BasicBlockData {
@@ -100,10 +112,6 @@ impl ControlFlowGraph {
 
     fn zero_value(&mut self) -> InstructionId {
         self.get_constant(0)
-    }
-
-    pub fn update_symbol(&mut self, block: BlockId, ident: Ident, val: InstructionId) {
-        self.basic_blocks[block.0].symbol_table.0.insert(ident, val);
     }
 
     fn issue_instruction_id(&mut self) -> InstructionId {
@@ -204,6 +212,7 @@ impl ControlFlowGraph {
                         );
                         return None;
                     }
+                    _ => unreachable!(),
                 }
             } else if let Some(next_ins) = next_ins {
                 match next_ins.kind {
@@ -272,10 +281,10 @@ impl ControlFlowGraph {
             dominator,
         };
 
-        if let HeaderStatementKind::Kill(kill) = i.kind {
+        if let HeaderStatementKind::Kill(_) = i.kind {
             self.block_data_mut(block)
                 .dominance_table
-                .register_kill(kill);
+                .register_kill(new_id);
         }
         let data = self.block_data_mut(block);
         data.header.push(i);
@@ -304,8 +313,8 @@ impl ControlFlowGraph {
     // this only looks one-level above, so dominance shouldn't be a problem
     fn lookup_or_init_symbol(&mut self, block: BlockId, ident: &Ident) -> InstructionId {
         let current_block = self.get_block(block);
-        if let Some(x) = current_block.symbol_table.0.get(ident) {
-            return *x;
+        if let Some(x) = current_block.symbol_table.get(ident) {
+            return x;
         }
 
         let references: Vec<(BlockId, Option<InstructionId>)> = self
@@ -313,7 +322,7 @@ impl ControlFlowGraph {
             .iter()
             .map(|block_id| {
                 let data = self.get_block(*block_id);
-                (*block_id, data.symbol_table.0.get(ident).copied())
+                (*block_id, data.symbol_table.get(ident))
             })
             .collect();
 
@@ -332,22 +341,23 @@ impl ControlFlowGraph {
 
     fn init_zero(&mut self, ident: &Ident) -> InstructionId {
         warn!("Init {:?} to zero", ident);
+        let var = Variable {
+            ident: ident.clone(),
+            dtype: crate::parser::VariableType::I32,
+        };
         let zero = self.zero_value();
-        self.const_block().symbol_table.set(ident.clone(), zero);
+        self.const_block().symbol_table.set(var, zero);
         return zero;
     }
 
     pub fn resolve_symbol(&mut self, block: BlockId, ident: &Ident) -> InstructionId {
-        let symbol = self.block_data_mut(block).symbol_table.0.get(&ident);
+        let symbol = self.block_data_mut(block).symbol_table.get(ident);
 
         match symbol {
             Some(id) => id.to_owned(),
             None => {
                 let id = self.lookup_or_init_symbol(block, &ident);
-                self.block_data_mut(block)
-                    .symbol_table
-                    .0
-                    .insert(ident.clone(), id);
+                self.block_data_mut(block).symbol_table.update(ident, id);
                 id
             }
         }
@@ -384,8 +394,33 @@ impl ControlFlowGraph {
         self.set_terminator(block, Terminator::Goto(target));
     }
 
-    pub(crate) fn set_symbol(&mut self, block: BlockId, ident: Ident, id: InstructionId) {
-        self.block_data_mut(block).symbol_table.set(ident, id);
+    pub(crate) fn set_symbol(&mut self, block: BlockId, var: &Variable, id: InstructionId) {
+        self.block_data_mut(block)
+            .symbol_table
+            .set(var.to_owned(), id);
+    }
+
+    pub fn update_variable(
+        &mut self,
+        block: BlockId,
+        var_to_update: &Variable,
+        val: InstructionId,
+    ) {
+        let map = &mut self.basic_blocks[block.0].symbol_table.0;
+        let existing = map
+            .iter()
+            .find(|(var, ins)| var.ident == var_to_update.ident);
+        if let Some(a) = existing {
+            assert!(a.0.dtype == var_to_update.dtype);
+        }
+        self.basic_blocks[block.0]
+            .symbol_table
+            .0
+            .insert(var_to_update.clone(), val);
+    }
+
+    pub fn update_symbol(&mut self, block: BlockId, ident: &Ident, val: InstructionId) {
+        self.basic_blocks[block.0].symbol_table.update(ident, val);
     }
 
     pub(crate) fn delete(&mut self, start: BlockId) {
@@ -478,5 +513,13 @@ impl ControlFlowGraph {
 
     fn const_block(&mut self) -> &mut BasicBlockData {
         &mut self.basic_blocks[0]
+    }
+
+    pub(crate) fn resolve_type(&self, block: BlockId, ident: &Ident) -> Option<VariableType> {
+        self.variables.iter().find(|it| it.ident==*ident).map(|it| it.dtype.clone())
+    }
+
+    pub(crate) fn register_param(&mut self, var: &Variable) {
+        self.variables.push(var.clone());
     }
 }

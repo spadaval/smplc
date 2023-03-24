@@ -1,10 +1,14 @@
-use std::collections::HashMap;
+use std::{collections::HashMap};
 
-use log::{debug, info, warn};
+use log::{debug, info, warn, error};
 
 use crate::{
-    parser::{Block, Designator, Expression, Function, Relation, Statement},
+    parser::{
+        Block, Designator, Expression, Function, Program, Relation, Statement, Variable,
+        VariableType,
+    },
     ssa::walker::KillFinder,
+    tokenizer::Ident,
 };
 
 use super::{cfg::ControlFlowGraph, types::*};
@@ -19,19 +23,13 @@ fn lower_expression(
         Expression::Constant(c) => cfg.get_constant(*c),
         // a lookup of an uninitialized variable returns the ZERO constant
         Expression::Identifier(ident) => cfg.resolve_symbol(block, ident),
-        Expression::ArrayAccess(ident, offset) => {
+        Expression::ArrayAccess(ident, offsets) => {
             let base = cfg.resolve_symbol(block, ident);
-            let offset_val = lower_expression(cfg, block, &*offset);
-            let scale_constant = cfg.get_constant(4);
-            let scaled_offset = cfg.add_instruction(
-                block,
-                InstructionKind::BasicOp(BasicOpKind::Multiply, offset_val, scale_constant),
-            );
+            
+            let Some(dtype) = cfg.resolve_type(block, ident) else {panic!("Failed to find type for {ident:?} for array access")};
 
-            let pointer = cfg.add_instruction(
-                block,
-                InstructionKind::BasicOp(BasicOpKind::Addi, base, scaled_offset),
-            );
+            let pointer = calculate_pointer(cfg, block, dtype, base, offsets);
+
             cfg.add_instruction(block, InstructionKind::Load(Load { base, pointer }))
         }
         Expression::Add(l, r) => {
@@ -119,30 +117,48 @@ fn lower_relation(cfg: &mut ControlFlowGraph, block: BlockId, relation: &Relatio
     }
 }
 
+fn is_valid_array_base(cfg: &ControlFlowGraph, ins: InstructionId) -> bool {
+    let header = cfg.get_header(ins);
+    warn!("Trying to use {:?} as array base", header);
+    if let Some(ins) = header {
+        match ins.kind {
+            HeaderStatementKind::Param(var) | HeaderStatementKind::Variable(_, var) => {
+                let m = matches!(var.dtype, VariableType::Array(_, _));
+                if !m {
+                    println!("Expected {:?} to be an array", var);
+                }
+                m
+            }
+            _ => false,
+        }
+    } else {
+        false
+    }
+}
+
 fn lower_statement(cfg: &mut ControlFlowGraph, block: BlockId, statement: Statement) -> BlockId {
     match statement {
         Statement::Assign(Designator::Ident(ident), expr) => {
             let val = lower_expression(cfg, block, &expr);
-            cfg.update_symbol(block, ident, val);
+            cfg.set_symbol(
+                block,
+                &Variable {
+                    ident,
+                    dtype: VariableType::I32,
+                },
+                val,
+            );
             block
         }
-        Statement::Assign(Designator::ArrayIndex(ref ident, ref offset), expr) => {
+        Statement::Assign(Designator::ArrayIndex(ref ident, ref offsets), expr) => {
             let value = lower_expression(cfg, block, &expr);
+
             let base = cfg.resolve_symbol(block, &ident);
-            let offset = lower_expression(cfg, block, &offset);
-            let pointer = cfg.add_instruction(
-                block,
-                InstructionKind::BasicOp(BasicOpKind::Addi, base, offset),
-            );
-            assert!(
-                matches!(
-                    cfg.get_instruction(base).and_then(|it| Some(it.kind)),
-                    Some(InstructionKind::Constant(_))
-                ) || matches!(
-                    cfg.get_header(base).and_then(|it| Some(it.kind)),
-                    Some(HeaderStatementKind::Param(_))
-                )
-            );
+            let Some(dtype) = cfg.resolve_type(block, ident) else {panic!()};
+
+            let pointer = calculate_pointer(cfg, block, dtype, base, offsets);
+
+            assert!(is_valid_array_base(cfg, base));
             cfg.add_instruction(
                 block,
                 InstructionKind::Store(Store {
@@ -188,6 +204,47 @@ fn lower_statement(cfg: &mut ControlFlowGraph, block: BlockId, statement: Statem
             block
         }
     }
+}
+
+fn calculate_pointer(
+    cfg: &mut ControlFlowGraph,
+    block: BlockId,
+    dtype: VariableType,
+    base: InstructionId,
+    offsets: &Vec<Expression>,
+) -> InstructionId {
+    let mut offset = cfg.get_constant(0);
+
+    let VariableType::Array(dtype, shape) = dtype else {panic!("Tried to index into a non-array")};
+
+    let pairs: Vec<(&Expression, usize)> = offsets.into_iter().zip(shape.into_iter()).collect();
+
+    // TODO make this not so insanely hard to read
+    for (offset_expr, shape) in pairs.iter().rev() {
+        let scaler = cfg.get_constant(*shape as i32);
+        let scaled_current = cfg.add_instruction(
+            block,
+            InstructionKind::BasicOp(BasicOpKind::Multiply, offset, scaler),
+        );
+
+        let this_dim = lower_expression(cfg, block, offset_expr);
+
+        offset = cfg.add_instruction(
+            block,
+            InstructionKind::BasicOp(BasicOpKind::Add, scaled_current, this_dim),
+        );
+    }
+
+    let scaler = cfg.get_constant(dtype.size() as i32);
+    let scaled_offset = cfg.add_instruction(
+        block,
+        InstructionKind::BasicOp(BasicOpKind::Multiply, offset, scaler),
+    );
+    let pointer = cfg.add_instruction(
+        block,
+        InstructionKind::BasicOp(BasicOpKind::Addi, base, scaled_offset),
+    );
+    pointer
 }
 
 fn lower_if(
@@ -280,12 +337,10 @@ fn try_lower_while_body(
     let mut valid_mutations = Vec::new();
     let mut invalid_mutations = Vec::new();
 
-    info!("Existing phis: {:?}", phis);
     for mutation in changed_symbols {
         if phis.contains(&mutation.old) {
             valid_mutations.push(mutation);
         } else {
-            warn!("{:?} is invalid", mutation);
             invalid_mutations.push(mutation);
         }
     }
@@ -316,8 +371,6 @@ fn lower_while(
         let (main_body, main_body_end, valid_mutations, invalid_mutations) =
             try_lower_while_body(cfg, header_block, &body);
 
-        warn!("Detected invalid mutations: {:?}", invalid_mutations);
-
         if invalid_mutations.is_empty() {
             // fix any previously generated phi statements
             for mutation in valid_mutations {
@@ -345,6 +398,11 @@ fn lower_while(
             return follow_block;
         }
 
+        warn!(
+            "Detected invalid mutations, undoing lowering: {:?}",
+            invalid_mutations
+        );
+
         cfg.delete(main_body);
         cfg.block_data_mut(header_block).reset();
         // restore dominance info we lost from the reset earlier
@@ -359,7 +417,7 @@ fn lower_while(
             let created_phi =
                 cfg.add_header_statement(header_block, HeaderStatementKind::Phi(old, new));
             debug!("Created {:?} for '{:?}'", created_phi, ident);
-            cfg.set_symbol(header_block, ident.clone(), created_phi);
+            cfg.update_symbol(header_block, &ident, created_phi);
             created_phis.insert(ident.clone(), created_phi);
         }
         info!("Created phis: {:?}", created_phis);
@@ -374,16 +432,47 @@ pub(crate) fn lower_block(cfg: &mut ControlFlowGraph, mut blk: BlockId, block: &
     blk
 }
 
-pub fn lower_function(function: &Function) -> ControlFlowGraph {
-    let mut cfg = ControlFlowGraph::new();
+pub fn lower_function(
+    function: &Function,
+    globals: &Vec<Variable>,
+    is_main: bool,
+) -> ControlFlowGraph {
+    let linkage = if is_main {
+        Linkage::Global
+    } else {
+        Linkage::Extern
+    };
+    let mut cfg = ControlFlowGraph::new(globals, linkage);
+
     let block = cfg.start_block();
+    cfg.propagate_symbols(cfg.const_block_id(), cfg.start_block());
+
     for var in &function.variables {
-        let id = cfg.add_header_statement(block, HeaderStatementKind::Param(var.ident()));
-        cfg.set_symbol(block, var.ident(), id);
+        let id = cfg.add_header_statement(block, HeaderStatementKind::Param(var.clone()));
+        cfg.set_symbol(block, var, id);
+        cfg.register_param(var);
     }
     let func_start = cfg.new_block(block);
     cfg.goto(block, func_start);
     lower_block(&mut cfg, func_start, &function.body);
+    cfg.skip_empty_blocks();
 
     cfg
+}
+
+pub fn lower_program(program: Program) -> Vec<(Function, ControlFlowGraph)> {
+    let main_function: Vec<&Function> = program
+        .functions
+        .iter()
+        .filter(|it| it.name == Ident("main".to_owned()))
+        .collect();
+    assert!(main_function.len() == 1);
+    program
+        .functions
+        .into_iter()
+        .map(|func| {
+            let cfg = lower_function(&func, &program.globals, func.name.0 == "main");
+            (func, cfg)
+        })
+        .collect()
 }

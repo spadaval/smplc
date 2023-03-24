@@ -70,7 +70,7 @@ mod tests {
                 let fib <- call fibbonachi(n);
                 call OutputNum(fib);
             }
-            function fibbonachi(n) {
+            function fibbonachi(n: [f32; 3]) {
                 let a <- 0;
                 let b <- 1;
                 let i <- 0;
@@ -136,7 +136,7 @@ mod tests {
                 call bubble_sort(a, 4);
             }
 
-            function bubble_sort(arr, size) {
+            function bubble_sort(arr: [i32; 10], size) {
                 let i <- 0;
                 while i < size do
                     let j <- 0;
@@ -145,6 +145,7 @@ mod tests {
                             let temp <- arr[j]
                             let arr[j] <- arr[j+1]
                             let arr[j+1] <- temp
+                            return 0;
                         fi
                         call OutputNum(arr[j]);
                         let i <- i + 1;
@@ -161,7 +162,9 @@ mod tests {
         let program = "
         main
         var i, x, y, j;
+        array x[5][6];
         {
+            let x[1][2] <- 5
             let i <- call InputNum();
             let x <- 0;
             let y <- 0;
@@ -177,6 +180,19 @@ mod tests {
             call OutputNum(j);
             call OutputNum(y)
         }.
+        ";
+        compile_and_render(program);
+    }
+
+    
+    #[test]
+    fn test_secret() {
+        let program = "
+main
+array[5][5] x;
+{
+    let x[1][2] <- x[2][7];
+}.
         ";
         compile_and_render(program);
     }

@@ -47,9 +47,12 @@ pub enum Token {
     Void,
     Main,
     Function,
+    I32,
+    F32,
     // structure
     Semicolon,
     Comma,
+    Colon
 }
 
 impl Token {
@@ -82,6 +85,8 @@ fn identifier_to_keyword(token: Token) -> Option<Token> {
         "array" => Some(Token::Array),
         "main" => Some(Token::Main),
         "function" => Some(Token::Function),
+        "i32" => Some(Token::I32),
+        "f32" => Some(Token::F32),
         _ => None,
     }
 }
@@ -233,6 +238,7 @@ impl State for Waiting {
             '}' => emit(Token::RightCurlyBracket),
             '.' => emit(Token::Period),
             ';' => emit(Token::Semicolon),
+            ':' => emit(Token::Colon),
             ',' => emit(Token::Comma),
             c if c.is_whitespace() => pass(),
             _ => Err(TokenizerError {
